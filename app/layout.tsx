@@ -12,14 +12,14 @@ const appUrl = process.env.NEXT_PUBLIC_URL || "https://farcastdrop.vercel.app";
 
 const frameMetadata = JSON.stringify({
   version: "next",
-  imageUrl: `${appUrl}/logo.png`, // Make sure this image exists
+  imageUrl: `${appUrl}/default.jpeg`, // Make sure this image exists
   button: {
     title: "Drip Tokens 💧",
     action: {
       type: "launch_frame",
       name: "FaucetDrops",
       url: appUrl,
-      splashImageUrl: `${appUrl}/default.png`,
+      splashImageUrl: `${appUrl}/logo.png`,
       splashBackgroundColor: "#020817",
     },
   },
