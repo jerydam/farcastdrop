@@ -1,0 +1,28 @@
+{
+  "name": "FaucetDrops",
+  "homepage": "https://faucetdrops.io",
+  "chains": ["eip155:42220", "eip155:1135", "eip155:42161", "eip155:8453"],
+  "app": {
+    "browser": "https://faucetdrops.io/wc",
+    "ios": "faucetdrops://wc",
+    "android": "faucetdrops://wc",
+    "mac": "https://faucetdrops.io/wc",
+    "windows": "https://faucetdrops.io/wc",
+    "linux": "https://faucetdrops.io/wc"
+  },
+  "mobile": {
+    "native": "faucetdrops://",
+    "universal": "https://faucetdrops.io/wc"
+  },
+  "desktop": {
+    "native": "faucetdrops://",
+    "universal": "https://faucetdrops.io/wc"
+  },
+  "metadata": {
+    "shortName": "FaucetDrops",
+    "colors": {
+      "primary": "#3b82f6",
+      "secondary": "#1e40af"
+    }
+  }
+}

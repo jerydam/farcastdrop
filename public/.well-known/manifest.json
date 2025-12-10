@@ -1,0 +1,18 @@
+{
+  "accountAssociation": {
+    "header": "eyJmaWQiOjgxMjkzMCwidHlwZSI6ImN1c3RvZHkiLCJrZXkiOiIweDk4OTVFMzg1OTEzODlmZmE4N0I3QjU2MURFNTFhNGQ3RGU1MjFlY2UifQ",
+    "payload": "eyJkb21haW4iOiJmYXVjZXRkcm9wdGVzdC52ZXJjZWwuYXBwIn0",
+    "signature": "nSw0VyhlUD9AIt0UQqqoUKiw7vQtu7tbeMZmcG3EIshqrncLhQArL94yRVF10lOnU3qH8iqp1lYBLTfvUGesghs="
+  },
+  "frame": {
+    "version": "1",
+    "name": "Example Frame",
+    "iconUrl": "https://faucetdroptest.vercel.app/icon.png",
+    "homeUrl": "https://faucetdroptest.vercel.app",
+    "imageUrl": "https://faucetdroptest.vercel.app/image.png",
+    "buttonTitle": "Check this out",
+    "splashImageUrl": "https://faucetdroptest.vercel.app/splash.png",
+    "splashBackgroundColor": "#020817",
+    "webhookUrl": "https://faucetdroptest.vercel.app/api/webhook"
+  }
+}
