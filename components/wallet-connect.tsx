@@ -16,7 +16,7 @@ import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
 
 export function WalletConnectButton({ className }: { className?: string }) {
-  const { address, isConnected, connect, chainId } = useWallet()
+  const { address, isConnected, chainId } = useWallet()
   const { toast } = useToast()
   
   const formatAddress = (addr: string) => `${addr.slice(0, 6)}...${addr.slice(-4)}`
@@ -33,19 +33,14 @@ export function WalletConnectButton({ className }: { className?: string }) {
     return `Chain ${id}`
   }
 
-  // Not connected
   if (!isConnected || !address) {
-    return (
-      <Button 
-        onClick={() => connect()} 
-        size="sm" 
-        className="flex items-center gap-2 font-semibold"
-      >
-        <Wallet className="h-4 w-4" />
-        Connect Wallet
-      </Button>
-    )
-  }
+  return (
+    <Button size="sm" disabled className="flex items-center gap-2">
+      <Wallet className="h-4 w-4" />
+      Connecting...
+    </Button>
+  )
+}
 
   // Connected
   return (
