@@ -1,18 +1,16 @@
 "use client"
-
 import { http, createConfig } from 'wagmi'
-import { celo } from 'wagmi/chains'
+import { celo } from 'wagmi/chains' // UPDATED: Celo-only
 import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector"
 
-// Helper to safely get connectors
+// Safe connectors with env check
 const connectors = typeof window !== 'undefined' ? [farcasterMiniApp()] : []
 
 export const wagmiConfig = createConfig({
-  chains: [celo],
+  chains: [celo], // UPDATED: Removed Base
   connectors, 
   transports: {
-    [celo.id]: http()
+    [celo.id]: http('https://forno.celo.org') // Celo RPC only
   },
-  // Ensure we don't try to hydrate connections on the server if they don't exist
   ssr: true, 
 })

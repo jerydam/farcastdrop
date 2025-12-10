@@ -1,9 +1,8 @@
 "use client"
-
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 import { BrowserProvider, type JsonRpcSigner } from "ethers"
 import { useToast } from "@/hooks/use-toast"
-import sdk from "@farcaster/miniapp-sdk"
+import { sdk } from "@farcaster/miniapp-sdk" // UPDATED: Only import sdk; isInMiniApp is sdk.isInMiniApp()
 
 interface WalletContextType {
   provider: BrowserProvider | null
@@ -15,9 +14,11 @@ interface WalletContextType {
   connect: () => Promise<void>
   ensureCorrectNetwork: (requiredChainId: number) => Promise<boolean>
   switchChain: (newChainId: number) => Promise<void>
+  sendBatchCalls: (calls: any[]) => Promise<void>
+  getAuthToken: () => Promise<string | null>
 }
 
-const CELO_CHAIN_ID = 42220
+const CELO_CHAIN_ID = 42220 // UPDATED: Celo-only; removed Base
 
 export const WalletContext = createContext<WalletContextType>({
   provider: null,
@@ -29,6 +30,8 @@ export const WalletContext = createContext<WalletContextType>({
   connect: async () => {},
   ensureCorrectNetwork: async () => false,
   switchChain: async () => {},
+  sendBatchCalls: async () => {},
+  getAuthToken: async () => null,
 })
 
 export function WalletProvider({ children }: { children: ReactNode }) {
@@ -41,129 +44,154 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const { toast } = useToast()
 
   useEffect(() => {
-    const initializeFarcaster = async () => {
+    const initialize = async () => {
       try {
-        console.log('[WalletProvider] Initializing Farcaster SDK...')
-        
-        // Initialize SDK
-        sdk.actions.ready()
-        
-        // Get Farcaster provider
-        const farcasterProvider = sdk.wallet.getEthereumProvider()
-        
-        // Wrap with Ethers
-        const ethersProvider = new BrowserProvider(farcasterProvider as any)
-        const ethersSigner = await ethersProvider.getSigner()
-        const userAddress = await ethersSigner.getAddress()
-        const network = await ethersProvider.getNetwork()
+        console.log('[WalletProvider] Initializing...')
 
-        setProvider(ethersProvider)
-        setSigner(ethersSigner)
-        setAddress(userAddress)
-        setChainId(Number(network.chainId))
-        setIsReady(true)
+        // UPDATED: Use sdk.isInMiniApp() (async method, not import)
+        const isMiniApp = await sdk.isInMiniApp()
+        if (isMiniApp) {
+          console.log('[WalletProvider] In MiniApp environment')
+          // Await ready() to hide splash screen
+          await sdk.actions.ready()
+          
+          // Get Farcaster provider
+          const farcasterProvider = sdk.wallet.getEthereumProvider()
+          // Wrap with Ethers
+          const ethersProvider = new BrowserProvider(farcasterProvider as any)
+          const ethersSigner = await ethersProvider.getSigner()
+          const userAddress = await ethersSigner.getAddress()
+          const network = await ethersProvider.getNetwork()
+          
+          setProvider(ethersProvider)
+          setSigner(ethersSigner)
+          setAddress(userAddress)
+          setChainId(Number(network.chainId))
+          setIsReady(true)
 
-        console.log('✅ [WalletProvider] Farcaster wallet connected:', {
-          address: userAddress,
-          chainId: Number(network.chainId)
-        })
+          console.log('✅ [WalletProvider] Farcaster wallet connected (Celo focus):', {
+            address: userAddress,
+            chainId: Number(network.chainId)
+          })
 
-        // Listen for chain changes
-        farcasterProvider.on('chainChanged', (newChainId: string) => {
-          console.log('[WalletProvider] Chain changed:', newChainId)
-          setChainId(Number(newChainId))
-        })
-
-        // Listen for account changes
-        farcasterProvider.on('accountsChanged', (accounts: string[]) => {
-          console.log('[WalletProvider] Accounts changed:', accounts)
-          if (accounts.length > 0) {
-            setAddress(accounts[0])
-          }
-        })
-
+          // Listen for changes
+          farcasterProvider.on('chainChanged', (newChainId: string) => {
+            console.log('[WalletProvider] Chain changed:', newChainId)
+            setChainId(Number(newChainId))
+          })
+          farcasterProvider.on('accountsChanged', (accounts: string[]) => {
+            console.log('[WalletProvider] Accounts changed:', accounts)
+            if (accounts.length > 0) {
+              setAddress(accounts[0])
+            } else {
+              // Handle disconnect
+              setAddress(null)
+              setIsReady(false)
+            }
+          })
+        } else {
+          // Fallback for non-MiniApp (standard browser wallet)
+          console.log('[WalletProvider] In standard browser - manual connect required')
+          toast({
+            title: "Wallet Mode",
+            description: "Connect manually in browser mode (Celo recommended)"
+          })
+          setIsReady(true) // Allow manual connect
+        }
       } catch (error) {
-        console.error('[WalletProvider] Farcaster initialization error:', error)
+        console.error('[WalletProvider] Initialization error:', error)
         toast({
           title: "Connection Error",
-          description: "Failed to connect to Farcaster wallet",
+          description: "Failed to initialize wallet",
           variant: "destructive"
         })
       }
     }
 
     if (typeof window !== 'undefined') {
-      initializeFarcaster()
+      initialize()
     }
   }, [toast])
 
   const connect = async () => {
-    try {
-      setIsConnecting(true)
-      const farcasterProvider = sdk.wallet.getEthereumProvider()
-      
-      // Request accounts (should be auto-approved in Farcaster)
-      const accounts = await farcasterProvider.request({ method: 'eth_requestAccounts' })
-      
-      if (accounts && accounts.length > 0) {
-        console.log('✅ [WalletProvider] Connected to Farcaster wallet:', accounts[0])
+    const isMiniApp = await sdk.isInMiniApp() // UPDATED: Use method here too
+    if (isMiniApp) {
+      // In MiniApp, auto-connect via SDK
+      try {
+        setIsConnecting(true)
+        const farcasterProvider = sdk.wallet.getEthereumProvider()
+        const accounts = await farcasterProvider.request({ method: 'eth_requestAccounts' })
+        if (accounts && accounts.length > 0) {
+          console.log('✅ [WalletProvider] Auto-connected (Celo):', accounts[0])
+          toast({ title: "Connected", description: `Wallet: ${accounts[0].slice(0, 6)}...` })
+        }
+      } catch (error: any) {
+        console.error('[WalletProvider] Auto-connect error:', error)
+        toast({ title: "Connection Failed", description: error.message, variant: "destructive" })
+      } finally {
+        setIsConnecting(false)
       }
-      
-    } catch (error: any) {
-      console.error('[WalletProvider] Connect error:', error)
-      toast({
-        title: "Connection Failed",
-        description: error.message,
-        variant: "destructive"
+    } else {
+      // In browser, prompt for standard connect (integrate with Wagmi if needed)
+      toast({ title: "Browser Mode", description: "Use Wagmi for connection to Celo" })
+    }
+  }
+
+  // Batch calls support for EIP-5792 (e.g., approve + claim faucet)
+  const sendBatchCalls = async (calls: any[]) => {
+    const isMiniApp = await sdk.isInMiniApp()
+    if (!isMiniApp || !provider) return
+    try {
+      const farcasterProvider = sdk.wallet.getEthereumProvider()
+      await farcasterProvider.request({
+        method: 'wallet_sendCalls',
+        params: [{ calls }]
       })
-    } finally {
-      setIsConnecting(false)
+      toast({ title: "Batch Tx Sent", description: "Transactions confirmed on Celo" })
+    } catch (error: any) {
+      console.error('[WalletProvider] Batch tx error:', error)
+      toast({ title: "Batch Tx Failed", description: error.message, variant: "destructive" })
+    }
+  }
+
+  // Quick Auth for server sessions
+  const getAuthToken = async () => {
+    const isMiniApp = await sdk.isInMiniApp()
+    if (!isMiniApp) return null
+    try {
+      const token = await sdk.quickAuth.getToken()
+      console.log('[WalletProvider] Auth token fetched')
+      return token
+    } catch (error) {
+      console.error('[WalletProvider] Auth error:', error)
+      return null
     }
   }
 
   const switchChain = async (newChainId: number) => {
+    // UPDATED: Celo-only; assume newChainId is CELO_CHAIN_ID
     try {
-      console.log('[WalletProvider] Switching to chain:', newChainId)
+      console.log('[WalletProvider] Switching to Celo:', newChainId)
       const farcasterProvider = sdk.wallet.getEthereumProvider()
-      
       await farcasterProvider.request({
         method: 'wallet_switchEthereumChain',
         params: [{ chainId: `0x${newChainId.toString(16)}` }]
       })
-
-      toast({
-        title: "Network Switched",
-        description: `Switched to chain ${newChainId}`
-      })
+      toast({ title: "Network Switched", description: "Now on Celo" })
     } catch (error: any) {
-      // If chain doesn't exist, add it
       if (error.code === 4902) {
-        try {
-          await addCeloNetwork()
-        } catch (addError: any) {
-          console.error('[WalletProvider] Failed to add network:', addError)
-          toast({
-            title: "Network Switch Failed",
-            description: addError.message,
-            variant: "destructive"
-          })
-          throw addError
-        }
+        await addCeloNetwork()
       } else {
-        console.error('[WalletProvider] Switch chain error:', error)
-        toast({
-          title: "Network Switch Failed",
-          description: error.message,
-          variant: "destructive"
-        })
+        console.error('[WalletProvider] Switch error:', error)
+        toast({ title: "Network Switch Failed", description: error.message, variant: "destructive" })
         throw error
       }
     }
   }
 
+  // UPDATED: Celo-only addNetwork
   const addCeloNetwork = async () => {
     const farcasterProvider = sdk.wallet.getEthereumProvider()
-    
     await farcasterProvider.request({
       method: 'wallet_addEthereumChain',
       params: [{
@@ -178,43 +206,30 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         blockExplorerUrls: ['https://explorer.celo.org']
       }]
     })
-
-    toast({
-      title: "Network Added",
-      description: "Celo network has been added to your wallet"
-    })
+    toast({ title: "Network Added", description: "Celo network added to wallet" })
   }
 
   const ensureCorrectNetwork = async (requiredChainId: number): Promise<boolean> => {
-    console.log('[WalletProvider] Ensuring correct network:', {
-      current: chainId,
-      required: requiredChainId
-    })
-
+    console.log('[WalletProvider] Ensuring Celo network:', { current: chainId, required: requiredChainId })
     if (!isReady) {
-      console.log('[WalletProvider] Wallet not ready, connecting...')
-      try {
-        await connect()
-        await new Promise(resolve => setTimeout(resolve, 2000))
-      } catch (error) {
-        console.error('[WalletProvider] Failed to connect:', error)
-        return false
-      }
+      await connect()
+      await new Promise(resolve => setTimeout(resolve, 2000))
     }
-
     if (chainId !== requiredChainId) {
-      console.log(`[WalletProvider] Network mismatch: current=${chainId}, required=${requiredChainId}`)
       try {
         await switchChain(requiredChainId)
         await new Promise(resolve => setTimeout(resolve, 1500))
+        // Refresh chainId after switch
+        if (provider) {
+          const network = await provider.getNetwork()
+          setChainId(Number(network.chainId))
+        }
         return true
       } catch (error) {
-        console.error('[WalletProvider] Failed to switch network:', error)
+        console.error('[WalletProvider] Network ensure failed:', error)
         return false
       }
     }
-
-    console.log('✅ [WalletProvider] On correct network')
     return true
   }
 
@@ -232,6 +247,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         connect,
         ensureCorrectNetwork,
         switchChain,
+        sendBatchCalls,
+        getAuthToken,
       }}
     >
       {children}
@@ -243,7 +260,7 @@ export function useWallet() {
   const context = useContext(WalletContext)
   
   useEffect(() => {
-    console.log('[useWallet] State:', {
+    console.log('[useWallet] State (Celo):', {
       address: context.address,
       isConnected: context.isConnected,
       chainId: context.chainId,
