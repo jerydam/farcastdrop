@@ -1,16 +1,13 @@
-// config/wagmi.ts
-"use client"
+import { wagmiConfig } from './wagmi'
+import { QueryClient } from '@tanstack/react-query'
 
-import { http, createConfig } from 'wagmi'
-import { celo } from 'wagmi/chains'
-import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector"
+// ✅ KEY FIX: Must use "export const"
+export const wagmiAdapter = wagmiConfig
 
-// Create Wagmi config with only Farcaster connector and Celo chain
-export const wagmiConfig = createConfig({
-  chains: [celo],
-  connectors: [farcasterMiniApp()],
-  transports: {
-    [celo.id]: http()
-  },
-  ssr: true
-})
+// ✅ KEY FIX: Must use "export const"
+export const queryClient = new QueryClient()
+
+// Legacy exports to prevent other errors
+export const projectId = ''
+export const networks = []
+export const modal = null

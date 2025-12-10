@@ -8,7 +8,7 @@ const inter = Inter({ subsets: ["latin"] })
 
 // Define the MiniApp metadata for the head tag
 // This tells Farcaster clients how to launch your frame
-const appUrl = process.env.NEXT_PUBLIC_URL || "https://faucetdroptest.vercel.app";
+const appUrl = process.env.NEXT_PUBLIC_URL || "https://farcastdrop.vercel.app";
 
 const frameMetadata = JSON.stringify({
   version: "next",
@@ -35,7 +35,6 @@ export const metadata: Metadata = {
     "fc:frame": frameMetadata,
   },
 };
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -44,6 +43,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
+        {/* 3. Use the dynamic component */}
         <Providers>
           <div className="min-h-screen flex flex-col">
             <main className="flex-1">

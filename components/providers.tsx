@@ -8,7 +8,7 @@ import { NetworkProvider } from "@/hooks/use-network"
 import { WalletProvider } from "@/components/wallet-provider"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { WagmiProvider } from 'wagmi'
-import { wagmiAdapter, queryClient } from '@/config/appkit'
+import { wagmiAdapter, queryClient } from '@/config/appkit' // Ensure these imports match exports
 import sdk from "@farcaster/miniapp-sdk"
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -17,7 +17,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const init = async () => {
       try {
-        // Safe to call ready() even if not in a frame, but good to check context
         setTimeout(() => {
           sdk.actions.ready();
         }, 300);
@@ -35,7 +34,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
       enableSystem 
       disableTransitionOnChange
     >
-      <WagmiProvider config={wagmiAdapter.wagmiConfig}>
+      {/* FIX: Use wagmiAdapter directly, do not use .wagmiConfig */}
+      <WagmiProvider config={wagmiAdapter}> 
         <QueryClientProvider client={queryClient}>
           <NetworkProvider>
             <WalletProvider>
