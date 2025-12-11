@@ -133,7 +133,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   // Stable connection state
   const isConnected = wagmiConnected && !!address && !!provider && !!signer
-
+  // Auto-switch to Celo on connect in Farcaster
+useEffect(() => {
+  const autoSwitchToCelo = async () => {
+    if (isFarcaster && wagmiConnected && chainId !== 42220) {
+      console.log('Auto-switching to Celo network...')
+      await switchChain(42220)
+    }
+  }
+  autoSwitchToCelo()
+}, [isFarcaster, wagmiConnected, chainId])
   useEffect(() => {
     console.log('🔄 [WalletProvider] State:', {
       isConnected,
