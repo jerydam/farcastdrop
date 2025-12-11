@@ -117,6 +117,10 @@ const CHECKIN_ABI = [
 const getErrorInfo = (error: unknown): { code?: string | number; message: string } => {
   if (error && typeof error === "object") {
     const errorObj = error as any
+    // Handle Ethers/Metamask error structure
+    if (errorObj.reason) return { message: errorObj.reason }
+    if (errorObj.data && errorObj.data.message) return { message: errorObj.data.message }
+    
     return {
       code: errorObj.code,
       message: errorObj.message || "Unknown error occurred",
@@ -156,7 +160,6 @@ export default function Head() {
     const handleRouteChange = () => {
       setIsMenuOpen(false)
     }
-    
     // router.events?.on('routeChangeStart', handleRouteChange)
     // return () => {
     //   router.events?.off('routeChangeStart', handleRouteChange)
@@ -195,13 +198,39 @@ export default function Head() {
     try {
       const contract = new Contract(DROPLIST_CONTRACT_ADDRESS, CHECKIN_ABI, signer)
 
-      // Estimate gas
+      // 1. Pre-check: Has user already participated?
+      // This prevents the gas estimation error if the contract reverts on double-entry
+      try {
+        const hasJoined = await contract.hasAddressParticipated(address)
+        if (hasJoined) {
+          throw new Error("You have already joined this droplist!")
+        }
+      } catch (checkError: any) {
+        // If the check itself fails (network error, etc), throw it. 
+        // If it's our manual error, it will be caught by the outer catch
+        if (checkError.message === "You have already joined this droplist!") {
+            throw checkError
+        }
+        console.warn("Could not verify participation status, proceeding cautiously:", checkError)
+      }
+
+      // 2. Simulation: Use staticCall to check for other revert reasons
+      // This gives us a readable error message instead of "Gas estimation failed"
+      try {
+        await contract.droplist.staticCall() 
+      } catch (simError: any) {
+        console.error("Simulation failed:", simError)
+        const simInfo = getErrorInfo(simError)
+        throw new Error(simInfo.message || "Transaction simulation failed")
+      }
+
+      // 3. Estimate Gas
       let gasLimit: bigint
       try {
         gasLimit = await contract.droplist.estimateGas()
       } catch (error) {
         console.error('Gas estimation error:', getErrorInfo(error))
-        throw new Error('Failed to estimate gas for droplist transaction')
+        throw new Error('Gas estimation failed. The transaction would likely fail.')
       }
 
       // Add 20% buffer using BigInt operations
@@ -236,10 +265,17 @@ export default function Head() {
     } catch (error) {
       console.error('Droplist join error:', getErrorInfo(error))
       const errorInfo = getErrorInfo(error)
-      setDroplistNotification(`Failed to join droplist: ${errorInfo.message}`)
+      
+      // Friendly error message for users
+      let displayMessage = errorInfo.message
+      if (displayMessage.toLowerCase().includes("already joined")) {
+        displayMessage = "You have already joined this droplist."
+      }
+
+      setDroplistNotification(`Failed to join: ${displayMessage}`)
       toast({
         title: "Error",
-        description: `Failed to join droplist: ${errorInfo.message}`,
+        description: displayMessage,
         variant: "destructive",
       })
     } finally {
