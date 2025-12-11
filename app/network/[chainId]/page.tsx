@@ -12,24 +12,24 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 // NOTE: These utility functions must be implemented in your lib/faucet.ts
 import { getFaucetsForNetwork, getFaucetDetailsFromFactory } from "@/lib/faucet"; 
-import { formatUnits, Contract, ZeroAddress, JsonRpcProvider } from "ethers";
+import { formatUnits, Contract, ZeroAddress, JsonRpcProvider, isAddress } from "ethers"; // Added isAddress
 import { Coins, Clock, Search, Filter, SortAsc, X, ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { ERC20_ABI } from "@/lib/abis";
 import { Header } from "@/components/header";
 import Link from "next/link";
 
 // --- CONFIGURATION PLACEHOLDERS ---
-// ⚠️ IMPORTANT: Replace this ABI with the correct one for your Faucet Factory Contracts
 const FAUCET_FACTORY_ABI = [
   "function getAllFaucets() view returns (address[])",
   "function getFaucetDetails(address faucetAddress) view returns ((address faucetAddress, address owner, string name, uint256 claimAmount, address tokenAddress, uint256 startTime, uint256 endTime, bool isClaimActive, uint256 balance, bool isEther, bool useBackend))",
 ];
-// ⚠️ IMPORTANT: These helper functions must exist in your project for this code to run.
-// The implementation of getFaucetsForNetwork must iterate over all network.factoryAddresses 
-// and call getAllFaucets on each one, returning a merged FaucetMeta[] list.
-// The implementation of getFaucetDetailsFromFactory must call getFaucetDetails on the specific factory.
-// --- END: CONFIGURATION PLACEHOLDERS ---
+
+// Fallback ABI to ensure balance fetching works even if @/lib/abis is missing
+const MINIMAL_ERC20_ABI = [
+  "function balanceOf(address owner) view returns (uint256)",
+  "function symbol() view returns (string)",
+  "function decimals() view returns (uint8)"
+];
 
 const DEFAULT_FAUCET_IMAGE = "/default.jpeg";
 
@@ -78,13 +78,12 @@ const SORT_OPTIONS = {
   DEFAULT: 'default', 
   NAME_ASC: 'name_asc',
   NAME_DESC: 'name_desc',
-  // NOTE: We remove Balance/Amount sorts as this data is not loaded in FaucetMeta
 } as const;
 
 type FilterOption = typeof FILTER_OPTIONS[keyof typeof FILTER_OPTIONS];
 type SortOption = typeof SORT_OPTIONS[keyof typeof SORT_OPTIONS];
 
-// --- NEW UTILITY FUNCTION ---
+// --- UTILITY FUNCTIONS ---
 
 interface DeletedFaucetResponse {
     success: boolean;
@@ -94,11 +93,9 @@ interface DeletedFaucetResponse {
 
 /**
  * Fetches the list of all faucet addresses marked as deleted in the off-chain database.
- * @returns A promise that resolves to a Set of lowercase deleted faucet addresses.
  */
 async function fetchDeletedFaucetsSet(): Promise<Set<string>> {
     try {
-        // NOTE: Replace the URL below with your actual backend base URL if it differs
         const response = await fetch("https://fauctdrop-backend.onrender.com/deleted-faucets");
         
         if (!response.ok) {
@@ -109,9 +106,7 @@ async function fetchDeletedFaucetsSet(): Promise<Set<string>> {
         const result: DeletedFaucetResponse = await response.json();
         
         if (result.success && result.deletedAddresses) {
-            // Convert all addresses to lowercase for case-insensitive checking
             const deletedSet = new Set(result.deletedAddresses.map(addr => addr.toLowerCase()));
-            console.log(`Fetched ${deletedSet.size} deleted faucet addresses from backend for filtering.`);
             return deletedSet;
         }
         return new Set();
@@ -120,9 +115,6 @@ async function fetchDeletedFaucetsSet(): Promise<Set<string>> {
         return new Set();
     }
 }
-
-// --- END: NEW UTILITY FUNCTION ---
-// --- UTILITY HOOKS AND HELPERS (Original Code) ---
 
 function useWindowSize() {
   const [windowSize, setWindowSize] = useState<{ width: number; height: number }>({
@@ -188,32 +180,76 @@ const getDefaultDescription = (networkName: string, ownerAddress: string): strin
   return `This is a faucet on ${networkName} by ${ownerAddress.slice(0, 6)}...${ownerAddress.slice(-4)}`;
 }
 
-// TokenBalance component (unchanged)
-function TokenBalance({ tokenAddress, tokenSymbol, tokenDecimals, isNativeToken, networkChainId }: { tokenAddress: string; tokenSymbol: string; tokenDecimals: number; isNativeToken: boolean; networkChainId: number; }) {
+// --- FIXED TOKEN BALANCE COMPONENT ---
+function TokenBalance({ 
+  tokenAddress, 
+  tokenSymbol, 
+  tokenDecimals, 
+  isNativeToken, 
+  networkChainId 
+}: { 
+  tokenAddress: string; 
+  tokenSymbol: string; 
+  tokenDecimals: number; 
+  isNativeToken: boolean; 
+  networkChainId: number; 
+}) {
   const { provider, address } = useWallet();
   const [balance, setBalance] = useState<string>("0");
   const [loading, setLoading] = useState(true);
-  const { toast } = useToast();
-
+  
   useEffect(() => {
+    let isMounted = true;
     const fetchBalance = async () => {
-      if (!provider || !address || !networkChainId) { setBalance("0"); setLoading(false); return; }
+      // 1. Safety Checks
+      if (!provider || !address) { 
+        if (isMounted) setLoading(false); 
+        return; 
+      }
+
+      // 2. Validate Address Format
+      // If it's not native and not the ZeroAddress, it must be a valid Ethereum address
+      if (!isNativeToken && tokenAddress !== ZeroAddress && !isAddress(tokenAddress)) {
+        console.error(`Invalid token address detected: ${tokenAddress}`);
+        if (isMounted) {
+            setBalance("Err");
+            setLoading(false);
+        }
+        return;
+      }
+
       try {
-        setLoading(true);
-        let balance: bigint;
-        if (isNativeToken) { balance = await provider.getBalance(address); } 
-        else if (tokenAddress === ZeroAddress) { balance = BigInt(0); } 
-        else { const tokenContract = new Contract(tokenAddress, ERC20_ABI, provider); balance = await tokenContract.balanceOf(address); }
-        const formattedBalance = Number(formatUnits(balance, tokenDecimals)).toFixed(4);
-        setBalance(formattedBalance);
-      } catch (error) {
-        console.error("Error fetching balance:", error);
-        setBalance("0");
-        toast({ title: "Failed to fetch balance", description: "Please try again later.", variant: "destructive", });
-      } finally { setLoading(false); }
+        if (isMounted) setLoading(true);
+        let rawBalance: bigint;
+
+        if (isNativeToken) {
+           rawBalance = await provider.getBalance(address);
+        } 
+        else if (tokenAddress === ZeroAddress) {
+           rawBalance = BigInt(0);
+        } 
+        else {
+           // Use MINIMAL_ERC20_ABI to guarantee compatibility
+           const tokenContract = new Contract(tokenAddress, MINIMAL_ERC20_ABI, provider);
+           rawBalance = await tokenContract.balanceOf(address);
+        }
+
+        if (isMounted) {
+          const formattedBalance = Number(formatUnits(rawBalance, tokenDecimals)).toFixed(4);
+          setBalance(formattedBalance);
+        }
+      } catch (error: any) {
+        console.error("Error fetching balance:", { token: tokenSymbol, error: error.message });
+        if (isMounted) setBalance("-");
+      } finally { 
+        if (isMounted) setLoading(false); 
+      }
     };
+
     fetchBalance();
-  }, [provider, address, tokenAddress, tokenDecimals, isNativeToken, networkChainId, toast]);
+
+    return () => { isMounted = false; };
+  }, [provider, address, tokenAddress, tokenDecimals, isNativeToken, networkChainId]);
 
   return (
     <Card className="overflow-hidden">
@@ -221,7 +257,11 @@ function TokenBalance({ tokenAddress, tokenSymbol, tokenDecimals, isNativeToken,
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
           <span className="text-xs sm:text-sm md:text-base font-medium">Your Balance:</span>
           <span className="text-xs sm:text-sm md:text-base font-semibold truncate max-w-full sm:max-w-[180px] md:max-w-[200px]">
-            {loading ? "Loading..." : `${balance} ${tokenSymbol}`}
+            {loading ? (
+                <span className="animate-pulse text-muted-foreground">Loading...</span>
+            ) : (
+                `${balance} ${tokenSymbol}`
+            )}
           </span>
         </div>
       </CardContent>
@@ -361,17 +401,9 @@ function FaucetCard({ faucet, onNetworkSwitch }: { faucet: FaucetData; onNetwork
               {faucet.network?.name || "Unknown"}
             </span>
           </div>
+          
           <div className="flex justify-between items-center gap-2">
-            <span className="text-muted-foreground">Balance:</span>
-            <span className="font-medium truncate">
-              {faucet.balance
-                ? Number(formatUnits(faucet.balance, faucet.tokenDecimals || 18)).toFixed(4)
-                : "0"}{" "}
-              {displayTokenSymbol}
-            </span>
-          </div>
-          <div className="flex justify-between items-center gap-2">
-            <span className="text-muted-foreground">Drop Amount:</span>
+            <span className="text-muted-foreground">Drip Amount:</span>
             <span className="font-medium truncate">
               {faucet.claimAmount
                 ? Number(formatUnits(faucet.claimAmount, faucet.tokenDecimals || 18)).toFixed(4)
@@ -612,10 +644,7 @@ const loadAllFaucetsMetadata = useCallback(async () => {
         // 1. Fetch the list of permanently deleted addresses from the backend
         const deletedAddressesSet = await fetchDeletedFaucetsSet();
 
-        // 2. CRITICAL: This function must fetch ALL faucets on-chain without filtering,
-        // (assuming getFaucetsForNetwork in lib/faucet.ts calls factory.getAllFaucets()).
-        // We do the filtering here.
-        // NOTE: If your lib/faucet.ts implementation still includes the RPC check, remove it there.
+        // 2. Fetch ALL faucets on-chain without filtering
         const allFetchedMeta: FaucetMeta[] = await getFaucetsForNetwork(network, networkProvider);
         
         // 3. Filter the list using the off-chain database index
@@ -665,7 +694,7 @@ const loadAllFaucetsMetadata = useCallback(async () => {
 
           // 2. Fetch the full details in parallel, calling the correct factory for each faucet
           const detailPromises = metaToFetch.map(async (meta) => {
-              // 🌟 CRITICAL: Call the specific factory using the address stored in meta
+              // Call the specific factory using the address stored in meta
               const faucetDetail = await getFaucetDetailsFromFactory(
                   meta.factoryAddress, 
                   meta.faucetAddress, 
@@ -687,7 +716,7 @@ const loadAllFaucetsMetadata = useCallback(async () => {
                           : `A faucet for ${faucetDetail.tokenSymbol || 'tokens'} on ${network.name}`
                   ),
                   createdAt: meta.createdAt || faucetDetail.createdAt,
-                  tokenDecimals: faucetDetail.tokenDecimals || 18, // Ensure decimals is set
+                  tokenDecimals: faucetDetail.tokenDecimals || 18, 
               } as FaucetData;
           });
           

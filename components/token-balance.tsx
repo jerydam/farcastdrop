@@ -86,7 +86,7 @@ export function TokenBalance({
     <Card className="overflow-hidden">
       <CardContent className="p-4">
         <div className="flex justify-between items-center">
-          <span className="text-sm font-medium">Balance:</span>
+          <span className="text-sm font-medium">My Balance:</span>
           {loading ? (
             <Skeleton className="h-6 w-24" />
           ) : !address ? (
