@@ -1,10 +1,11 @@
+// File: config/appkit.ts - FIXED VERSION
 "use client"
 
 import { createAppKit } from '@reown/appkit/react'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
 import { arbitrum, mainnet, base, celo, type AppKitNetwork } from '@reown/appkit/networks'
 import { QueryClient } from '@tanstack/react-query'
-import  farcasterMiniapp  from '@farcaster/miniapp-wagmi-connector' // ADD THIS
+import { cookieStorage, createStorage } from 'wagmi'
 
 export const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || '83d474a1874af18893a31155e04adad0'
 
@@ -24,20 +25,14 @@ export const networks: [AppKitNetwork, ...AppKitNetwork[]] = [
   mainnet, arbitrum, base, celo, lisk
 ]
 
-// CRITICAL: Create wagmi config WITH Farcaster connector FIRST
-const config = {
-  connectors: [
-    farcasterMiniapp(), // Farcaster MiniApp connector - MUST be first
-    // AppKit auto-adds other connectors, but Farcaster needs explicit inclusion
-  ],
-  chains: networks
-}
-
+// Create WagmiAdapter WITHOUT custom connectors - let it handle everything
 export const wagmiAdapter = new WagmiAdapter({
   networks,
   projectId,
-  config, // Pass the config with Farcaster connector
-  ssr: true
+  ssr: true,
+  storage: createStorage({
+    storage: cookieStorage
+  })
 })
 
 const metadata = {

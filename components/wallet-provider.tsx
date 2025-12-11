@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 import { BrowserProvider, type JsonRpcSigner } from "ethers"
-import { useDisconnect, useSwitchChain, useAccount, useChainId, useConnect } from 'wagmi'
+import { useDisconnect, useSwitchChain, useAccount, useChainId, useConnect, useConnectorClient } from 'wagmi'
 import { useToast } from "@/hooks/use-toast"
 import sdk from "@farcaster/miniapp-sdk"
 
@@ -43,17 +43,21 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const { disconnect: wagmiDisconnect } = useDisconnect()
   const { switchChain: wagmiSwitchChain } = useSwitchChain()
   
-  const { address, isConnected: wagmiConnected, isConnecting } = useAccount()
+  const { address, isConnected: wagmiConnected, isConnecting, connector } = useAccount()
   const chainId = useChainId()
+  
+  // Get the connector client from Wagmi - THIS IS KEY
+  const { data: connectorClient } = useConnectorClient()
 
-  // Check if running in Farcaster frame
+  // Detect Farcaster environment
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
         sdk.actions.ready()
-        if (sdk.wallet) {
+        const context = sdk.context
+        if (context?.client?.clientFid) {
           setIsFarcaster(true)
-          console.log('✅ Running in Farcaster MiniApp')
+          console.log('✅ Running in Farcaster MiniApp, FID:', context.client.clientFid)
         }
       } catch (e) {
         console.log('Not in Farcaster environment')
@@ -61,34 +65,31 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // CRITICAL FIX: Setup provider/signer for both Farcaster and regular wallets
+  // CRITICAL FIX: Use Wagmi's connector client to create ethers provider
   useEffect(() => {
     const updateProviderAndSigner = async () => {
-      if (wagmiConnected && address) {
+      if (wagmiConnected && address && connectorClient) {
         try {
-          let ethersProvider: BrowserProvider
-          
-          // Use Farcaster's provider if in MiniApp, otherwise use window.ethereum
-          if (isFarcaster && sdk.wallet) {
-            console.log('[WalletProvider] Using Farcaster SDK provider')
-            const farcasterProvider = sdk.wallet.getEthereumProvider()
-            ethersProvider = new BrowserProvider(farcasterProvider)
-          } else if (window.ethereum) {
-            console.log('[WalletProvider] Using window.ethereum provider')
-            ethersProvider = new BrowserProvider(window.ethereum)
-          } else {
-            throw new Error('No Ethereum provider found')
-          }
+          console.log('[WalletProvider] Creating provider from connector client:', {
+            connector: connector?.name,
+            address,
+            chainId,
+            isFarcaster
+          })
 
+          // Create ethers provider from Wagmi's connector client
+          // This works for ALL connectors including Farcaster
+          const ethersProvider = new BrowserProvider(connectorClient as any)
           const ethersSigner = await ethersProvider.getSigner()
           
           setProvider(ethersProvider)
           setSigner(ethersSigner)
           setIsReady(true)
           
-          console.log('✅ [WalletProvider] Wallet connected successfully:', { 
+          console.log('✅ [WalletProvider] Provider/Signer ready:', { 
             address, 
             chainId,
+            connector: connector?.name,
             hasProvider: !!ethersProvider,
             hasSigner: !!ethersSigner,
             isFarcaster
@@ -100,7 +101,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           setIsReady(false)
         }
       } else {
-        console.log('[WalletProvider] Wallet disconnected or missing dependencies. Clearing state.')
+        console.log('[WalletProvider] Clearing state:', {
+          wagmiConnected,
+          hasAddress: !!address,
+          hasConnectorClient: !!connectorClient
+        })
         setProvider(null)
         setSigner(null)
         setIsReady(false)
@@ -108,37 +113,21 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
 
     updateProviderAndSigner()
-  }, [wagmiConnected, address, chainId, isFarcaster])
+  }, [wagmiConnected, address, chainId, connectorClient, connector, isFarcaster])
 
   // Connect function
   const connect = async () => {
-    if (isFarcaster && sdk.wallet) {
-      // Farcaster handles connection automatically, just request accounts
-      try {
-        const provider = sdk.wallet.getEthereumProvider()
-        await provider.request({ method: 'eth_requestAccounts' })
-        console.log('✅ Farcaster wallet connected')
-      } catch (error: any) {
-        console.error('❌ Farcaster connection failed:', error)
-        toast({ 
-          title: "Connection failed", 
-          description: error.message, 
-          variant: "destructive" 
-        })
-      }
-    } else {
-      // Standard Wagmi connect for non-Farcaster
-      try {
-        await connectAsync()
-        console.log('✅ Standard wallet connected')
-      } catch (error: any) {
-        console.error('❌ Connection failed:', error)
-        toast({ 
-          title: "Connection failed", 
-          description: error.message, 
-          variant: "destructive" 
-        })
-      }
+    try {
+      console.log('Connecting wallet...')
+      await connectAsync()
+      console.log('✅ Wallet connected')
+    } catch (error: any) {
+      console.error('❌ Connection failed:', error)
+      toast({ 
+        title: "Connection failed", 
+        description: error.message, 
+        variant: "destructive" 
+      })
     }
   }
 
@@ -146,18 +135,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const isConnected = wagmiConnected && !!address && !!provider && !!signer
 
   useEffect(() => {
-    console.log('🔄 [WalletProvider] State update:', {
+    console.log('🔄 [WalletProvider] State:', {
       isConnected,
       isConnecting,
       wagmiConnected,
       address: address ? `${address.slice(0, 6)}...${address.slice(-4)}` : null,
       chainId,
+      connector: connector?.name,
       hasProvider: !!provider,
       hasSigner: !!signer,
+      hasConnectorClient: !!connectorClient,
       isReady,
       isFarcaster
     })
-  }, [isConnected, isConnecting, wagmiConnected, address, chainId, provider, signer, isReady, isFarcaster])
+  }, [isConnected, isConnecting, wagmiConnected, address, chainId, connector, provider, signer, connectorClient, isReady, isFarcaster])
 
   const disconnect = () => {
     try {
@@ -179,18 +170,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const switchChain = async (newChainId: number) => {
     try {
       console.log('Switching to chain:', newChainId)
-      
-      if (isFarcaster && sdk.wallet) {
-        // Use Farcaster's provider for chain switching
-        const farcasterProvider = sdk.wallet.getEthereumProvider()
-        await farcasterProvider.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: `0x${newChainId.toString(16)}` }],
-        })
-      } else {
-        // Use Wagmi for standard wallets
-        await wagmiSwitchChain({ chainId: newChainId })
-      }
+      await wagmiSwitchChain({ chainId: newChainId })
       
       toast({
         title: "Network switched",
@@ -215,7 +195,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     })
     
     if (!isConnected) {
-      console.log('Wallet not connected, opening connection modal...')
+      console.log('Wallet not connected, attempting to connect...')
       try {
         await connect()
         await new Promise(resolve => setTimeout(resolve, 2000))
