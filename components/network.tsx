@@ -1,23 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
-// Assuming useWallet and useNetwork are imported correctly
 import { useWallet } from "@/hooks/use-wallet"; 
 import { useNetwork } from "@/hooks/use-network"; 
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search, Loader2, Zap, AlertTriangle } from "lucide-react";
 import Link from "next/link";
-// Assuming getFaucetsForNetwork is imported correctly
 import { getFaucetsForNetwork } from "@/lib/faucet"; 
+import { JsonRpcProvider } from "ethers"; // Import JsonRpcProvider
 
 // --- TYPE EXTENSIONS ---
-// Re-defining the structure with logoUrl for clarity in this component
 interface Network {
   chainId: number;
   name: string;
   color: string;
-  logoUrl: string; // <-- New property used for the logo
+  logoUrl: string;
+  rpcUrl?: string; // Add this optional field for direct data fetching
 }
 
 // --- NEW SUB-COMPONENT: StatusBadge ---
@@ -57,7 +56,6 @@ interface NetworkGridProps {
 }
 
 export function NetworkGrid({ className = "" }: NetworkGridProps) {
-  // Assuming useWallet returns both chainId and the JsonRpcProvider
   const { chainId, provider } = useWallet(); 
   const { networks } = useNetwork();
   const { toast } = useToast();
@@ -71,10 +69,8 @@ export function NetworkGrid({ className = "" }: NetworkGridProps) {
   >({});
 
   useEffect(() => {
-    const initialStatus: Record<
-      string,
-      { loading: boolean; error: string | null }
-    > = {};
+    // Initialize states
+    const initialStatus: Record<string, { loading: boolean; error: string | null }> = {};
     const initialFaucetCounts: Record<string, number> = {};
     const initialActiveFaucetCounts: Record<string, number> = {};
 
@@ -89,21 +85,13 @@ export function NetworkGrid({ className = "" }: NetworkGridProps) {
     setActiveFaucetCounts(initialActiveFaucetCounts);
 
     const loadFaucetCounts = async () => {
-      const newStatus: Record<
-        string,
-        { loading: boolean; error: string | null }
-      > = {};
+      const newStatus: Record<string, { loading: boolean; error: string | null }> = {};
       const newCounts: Record<string, number> = {};
       const newActiveCounts: Record<string, number> = {};
 
-      if (!provider) {
-        console.warn("Provider is missing; skipping faucet data load.");
-        return;
-      }
-
       await Promise.all(
         networks.map(async (network: Network) => {
-          // Only attempt to load for the currently connected network for efficiency
+          // Optimization: Only load for the currently connected network to save resources
           if (network.chainId !== chainId) {
             newStatus[network.name] = { loading: false, error: null };
             newCounts[network.name] = 0;
@@ -117,10 +105,31 @@ export function NetworkGrid({ className = "" }: NetworkGridProps) {
               [network.name]: { loading: true, error: null },
             }));
 
-            // FIX: Pass the provider as the second argument
-            const faucets = await getFaucetsForNetwork(network, provider); 
+            // --- KEY FIX FOR FARCASTER ---
+            // 1. Prefer a direct JSON RPC connection if an RPC URL is available.
+            //    This bypasses wallet restrictions/latency in Farcaster frames.
+            // 2. Fallback to the wallet 'provider' if no RPC URL is found.
+            let dataProvider: any = provider;
 
-            // Assuming FaucetMeta has a boolean 'isClaimActive' property
+            if (network.rpcUrl) {
+                try {
+                    dataProvider = new JsonRpcProvider(network.rpcUrl);
+                } catch (e) {
+                    console.warn(`Failed to create JsonRpcProvider for ${network.name}, falling back to wallet provider.`);
+                }
+            }
+
+            // If we still have no provider (wallet not connected & no RPC), skip this network
+            if (!dataProvider) {
+                 // Silent return; we just won't show data yet
+                 newStatus[network.name] = { loading: false, error: "Waiting for connection" };
+                 return;
+            }
+
+            // Fetch faucets using the robust dataProvider
+            const faucets = await getFaucetsForNetwork(network, dataProvider); 
+
+            // Filter active faucets
             const activeFaucets = faucets.filter(
               (faucet) => faucet.isClaimActive
             );
@@ -128,6 +137,7 @@ export function NetworkGrid({ className = "" }: NetworkGridProps) {
             newCounts[network.name] = faucets.length;
             newActiveCounts[network.name] = activeFaucets.length;
             newStatus[network.name] = { loading: false, error: null };
+            
           } catch (error) {
             console.error(`Error loading faucets for ${network.name}:`, error);
             const errorMessage = `Failed to load faucets`;
@@ -136,11 +146,14 @@ export function NetworkGrid({ className = "" }: NetworkGridProps) {
             newCounts[network.name] = 0;
             newActiveCounts[network.name] = 0;
 
-            toast({
-              title: `Connection Error on ${network.name}`,
-              description: errorMessage,
-              variant: "destructive",
-            });
+            // Only toast if it's the active network to avoid spam
+            if (chainId === network.chainId) {
+                toast({
+                title: `Connection Error on ${network.name}`,
+                description: errorMessage,
+                variant: "destructive",
+                });
+            }
           }
         })
       );
@@ -163,15 +176,14 @@ export function NetworkGrid({ className = "" }: NetworkGridProps) {
 
   return (
     <div className={`space-y-6 ${className}`}>
-      {/* --- CONNECTED NETWORK CARD (Enhanced) --- */}
+      {/* --- CONNECTED NETWORK CARD --- */}
       {currentNetwork ? (
         <div className="w-full">
-          
           <Link href={`/network/${currentNetwork.chainId}`}>
             <Card className="overflow-hidden shadow-lg border-2 transition-all duration-300 ease-in-out hover:shadow-xl cursor-pointer">
               <CardHeader className="p-4 flex flex-row items-center justify-between space-y-0">
                 <div className="flex items-center gap-3">
-                  {/* ⭐️ LOGO IMPLEMENTATION: Replaced LayoutGrid with <img> */}
+                  {/* Logo Display */}
                   <div
                     className="h-8 w-8 rounded-full flex items-center justify-center overflow-hidden"
                     style={{ border: `2px solid ${currentNetwork.color}` }}
@@ -179,7 +191,7 @@ export function NetworkGrid({ className = "" }: NetworkGridProps) {
                     <img
                       src={currentNetwork.logoUrl}
                       alt={`${currentNetwork.name} Logo`}
-                      className="h-full w-full object-contain p-1" // Added padding to prevent stretching
+                      className="h-full w-full object-contain p-1" 
                     />
                   </div>
                   <CardTitle className="text-lg font-bold truncate text-primary">
@@ -195,10 +207,14 @@ export function NetworkGrid({ className = "" }: NetworkGridProps) {
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Total Faucets</p>
                   <p className="text-2xl font-extrabold text-card-foreground">
-                    {faucetCounts[currentNetwork.name] ?? 0}
+                    {/* Display logic: If loading, show spinner, else show count */}
+                    {networkStatus[currentNetwork.name]?.loading ? (
+                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    ) : (
+                        faucetCounts[currentNetwork.name] ?? 0
+                    )}
                   </p>
                 </div>
-                
               </CardContent>
               <div className=" p-2 text-center text-xs text-primary/80 font-medium">
                 Click to explore available faucets on this network →
@@ -224,8 +240,6 @@ export function NetworkGrid({ className = "" }: NetworkGridProps) {
           </div>
         </Card>
       )}
-
-      {/* "All Supported Networks" section removed as requested. */}
     </div>
   );
 }
