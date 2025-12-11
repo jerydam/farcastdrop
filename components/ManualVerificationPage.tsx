@@ -14,7 +14,7 @@ import {
   Link as LinkIcon,
   Upload
 } from "lucide-react"
-import { useWallet } from "@/hooks/use-wallet" 
+import { useWallet } from "@/components/wallet-provider" 
 import { useNetwork } from "@/hooks/use-network" 
 // import { toast } from "@/hooks/use-toast" // Assuming useToast hook
 const toast = console.log; // Using console.log as mock toast

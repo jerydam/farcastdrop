@@ -2,10 +2,10 @@
 
 import React, { useEffect, useState, useMemo } from "react"
 import { useRouter } from "next/navigation"
-import { useWallet } from "@/hooks/use-wallet"
+import { useWallet } from "@/components/wallet-provider"
 import { useNetwork } from "@/hooks/use-network" 
 import { getUserFaucets } from "@/lib/faucet"
-import { Header } from "@/components/header"
+import {Header} from "@/components/header"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"

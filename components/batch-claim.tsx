@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useWallet } from "@/hooks/use-wallet"
+import { useWallet } from "@/components/wallet-provider"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"

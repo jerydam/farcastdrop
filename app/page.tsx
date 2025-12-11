@@ -1,303 +1,93 @@
-// File: app/page.tsx (or components/home.tsx - the main Home component)
 "use client"
 
-import { FaucetList } from "@/components/faucet-list"
-import { AnalyticsDashboard } from "@/components/analytics-dashboard"
-import { Contract } from "ethers"
-import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
-import { isSupportedNetwork } from "../lib/divvi-integration"
-import { NetworkGrid } from "@/components/network"
-import { useWallet } from "@/hooks/use-wallet"
-import { useToast } from "@/hooks/use-toast"
-import Head from "@/components/Head"
+import { useWallet } from "@/components/wallet-provider"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Wallet, Zap, Users, Globe, ArrowRight } from "lucide-react"
+import Link from "next/link"
 
-// Smart contract details
-const DROPLIST_CONTRACT_ADDRESS = "0xB8De8f37B263324C44FD4874a7FB7A0C59D8C58E"
-const CHECKIN_ABI = [
-  {
-    "anonymous": false,
-    "inputs": [
-      { "indexed": true, "internalType": "address", "name": "user", "type": "address" },
-      { "indexed": false, "internalType": "uint256", "name": "timestamp", "type": "uint256" },
-      { "indexed": false, "internalType": "uint256", "name": "balance", "type": "uint256" }
-    ],
-    "name": "CheckIn",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      { "indexed": true, "internalType": "address", "name": "user", "type": "address" },
-      { "indexed": false, "internalType": "uint256", "name": "participantCount", "type": "uint256" }
-    ],
-    "name": "NewParticipant",
-    "type": "event"
-  },
-  {
-    "inputs": [
-      { "internalType": "address", "name": "user", "type": "address" }
-    ],
-    "name": "addressToString",
-    "outputs": [
-      { "internalType": "string", "name": "", "type": "string" }
-    ],
-    "stateMutability": "pure",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "droplist",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "getAllParticipants",
-    "outputs": [
-      { "internalType": "address[]", "name": "", "type": "address[]" }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      { "internalType": "address", "name": "user", "type": "address" }
-    ],
-    "name": "getBalance",
-    "outputs": [
-      { "internalType": "uint256", "name": "", "type": "uint256" }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      { "internalType": "uint256", "name": "index", "type": "uint256" }
-    ],
-    "name": "getParticipant",
-    "outputs": [
-      { "internalType": "address", "name": "", "type": "address" }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "getTotalTransactions",
-    "outputs": [
-      { "internalType": "uint256", "name": "", "type": "uint256" }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "getUniqueParticipantCount",
-    "outputs": [
-      { "internalType": "uint256", "name": "", "type": "uint256" }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      { "internalType": "address", "name": "user", "type": "address" }
-    ],
-    "name": "hasAddressParticipated",
-    "outputs": [
-      { "internalType": "bool", "name": "", "type": "bool" }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  }
-]
-
-// Helper function to safely extract error information
-const getErrorInfo = (error: unknown): { code?: string | number; message: string } => {
-  if (error && typeof error === "object") {
-    const errorObj = error as any
-    return {
-      code: errorObj.code,
-      message: errorObj.message || "Unknown error occurred",
-    }
-  }
-  return {
-    message: typeof error === "string" ? error : "Unknown error occurred",
-  }
-}
-
-export default function Home() {
-  const router = useRouter()
-  const { address, isConnected, signer, chainId, ensureCorrectNetwork } = useWallet()
-  const { toast } = useToast()
-  
-  // Existing states
-  const [isCheckingIn, setIsCheckingIn] = useState(false)
-  const [checkInStatus, setCheckInStatus] = useState("")
-  const [isAllowedAddress, setIsAllowedAddress] = useState(false)
-  const [currentNetwork, setCurrentNetwork] = useState<"celo" | "lisk" | null>(null)
-  
-  // Loading states
-  const [isNavigatingToCreate, setIsNavigatingToCreate] = useState(false)
-  const [isNavigatingToVerify, setIsNavigatingToVerify] = useState(false)
-  const [isNetworkSelectorLoading, setIsNetworkSelectorLoading] = useState(false)
-  const [isJoiningDroplist, setIsJoiningDroplist] = useState(false)
-  
-  
-  // New droplist states
-  const [isDroplistOpen, setIsDroplistOpen] = useState(false)
-  const [droplistNotification, setDroplistNotification] = useState<string | null>(null)
-
-  // Handle navigation with loading
-  const handleCreateFaucetClick = async (e: React.MouseEvent) => {
-    e.preventDefault()
-    setIsNavigatingToCreate(true)
-    
-    try {
-      await new Promise(resolve => setTimeout(resolve, 100)) // Small delay for UX
-      router.push('/create-faucet')
-    } catch (error) {
-      console.error('Navigation error:', error)
-      setIsNavigatingToCreate(false)
-    }
-  }
-
-  const handleVerifyClick = async (e: React.MouseEvent) => {
-    e.preventDefault()
-    setIsNavigatingToVerify(true)
-    
-    try {
-      await new Promise(resolve => setTimeout(resolve, 100)) // Small delay for UX
-      router.push('/verify')
-    } catch (error) {
-      console.error('Navigation error:', error)
-      setIsNavigatingToVerify(false)
-    }
-  }
-
-  // Handle droplist modal
-  const handleDroplistClick = () => {
-    setIsDroplistOpen(true)
-    setDroplistNotification(null)
-  }
-
-  const handleDroplistClose = () => {
-    setIsDroplistOpen(false)
-  }
-
-  // Handle network selector loading
-  const handleNetworkSelectorChange = async (network: string) => {
-    setIsNetworkSelectorLoading(true)
-    try {
-      await new Promise(resolve => setTimeout(resolve, 1000)) // Simulate network switch
-      setCurrentNetwork(network as "celo" | "lisk")
-    } catch (error) {
-      console.error('Network switch error:', error)
-    } finally {
-      setIsNetworkSelectorLoading(false)
-    }
-  }
-
-  
-
-  // Clean up event listener
-  useEffect(() => {
-    let contract: Contract | null = null
-    if (isConnected && address && chainId && signer) {
-      try {
-        contract = new Contract(DROPLIST_CONTRACT_ADDRESS, CHECKIN_ABI, signer)
-        const listener = (user: string, participantCount: bigint) => {
-          if (user.toLowerCase() === address.toLowerCase()) {
-            setDroplistNotification(`Joined droplist! Total participants: ${participantCount}`)
-            toast({
-              title: "Droplist Joined",
-              description: `Total participants: ${participantCount}`,
-            })
-          }
-        }
-        contract.on("NewParticipant", listener)
-        return () => {
-          contract?.off("NewParticipant", listener)
-        }
-      } catch (error) {
-        console.error('Error setting up event listener:', getErrorInfo(error))
-      }
-    }
-  }, [isConnected, address, chainId, signer])
-
-  // Reset navigation loading states
-  useEffect(() => {
-    const handleRouteChange = () => {
-      setIsNavigatingToCreate(false)
-      setIsNavigatingToVerify(false)
-    }
-    return () => {
-      handleRouteChange()
-    }
-  }, [])
-
-  // Show notification
-  useEffect(() => {
-    if (droplistNotification) {
-      const timer = setTimeout(() => {
-        setDroplistNotification(null)
-      }, 5000)
-      return () => clearTimeout(timer)
-    }
-  }, [droplistNotification])
-
-  // Debug button state
-  useEffect(() => {
-    console.log('Button state:', { isConnected, isJoiningDroplist, disabled: !isConnected || isJoiningDroplist || !chainId || !isSupportedNetwork(chainId!), address, chainId })
-  }, [isConnected, isJoiningDroplist, address, chainId])
+export default function HomePage() {
+  const { address, isConnected } = useWallet()
 
   return (
-     <main className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
-      <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 lg:py-8">
-        <div className="flex flex-col gap-4 sm:gap-6 lg:gap-8">
-          {/* Header Section */}
-          <Head />
+    <main className="min-h-screen bg-gradient-to-b from-background to-muted">
+      <div className="container mx-auto px-4 py-16 max-w-6xl text-center">
+        {/* Hero */}
+        <div className="mb-16">
+          <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 bg-clip-text text-transparent bg-gradient-to-r from-primary to-purple-600">
+            FaucetDrops
+          </h1>
+          <p className="text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto">
+            Create token faucets on Celo in seconds — directly inside Warpcast
+          </p>
+        </div>
 
-          {/* User Info Card (for mobile) */}
-          {isConnected && address && (
-            <div className="lg:hidden bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-3 sm:p-4">
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Wallet</span>
-                </div>
-                <p className="text-xs text-slate-600 dark:text-slate-300 font-mono break-all">
-                  {address}
+        {/* Features */}
+        <div className="grid md:grid-cols-3 gap-8 mb-16">
+          <Card className="p-8 hover:shadow-xl transition-shadow">
+            <Zap className="h-12 w-12 mx-auto mb-4 text-primary" />
+            <CardTitle>Instant Setup</CardTitle>
+            <CardContent className="mt-4 text-muted">
+              Deploy a faucet in under 30 seconds — no gas, no setup
+            </CardContent>
+          </Card>
+
+          <Card className="p-8 hover:shadow-xl transition-shadow">
+            <Users className="h-12 w-12 mx-auto mb-4 text-primary" />
+            <CardTitle>Community Ready</CardTitle>
+            <CardContent className="mt-4 text-muted">
+              Drop codes, whitelists, or custom claims — all in one place
+            </CardContent>
+          </Card>
+
+          <Card className="p-8 hover:shadow-xl transition-shadow">
+            <Globe className="h-12 w-12 mx-auto mb-4 text-primary" />
+            <CardTitle>Live on Farcaster</CardTitle>
+            <CardContent className="mt-4 text-muted">
+              Works only inside Warpcast — the real social layer of crypto
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* CTA */}
+        <div className="max-w-2xl mx-auto">
+          {isConnected ? (
+            <div className="space-y-8">
+              <div className="bg-card rounded-2xl p-8 border shadow-lg">
+                <p className="text-lg mb-6">
+                  Connected as
                 </p>
-                {currentNetwork && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Network</span>
-                    <span className="text-xs px-2 py-1 bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full capitalize whitespace-nowrap">
-                      {currentNetwork}
-                    </span>
-                  </div>
-                )}
+                <code className="text-sm md:text-base bg-muted px-4 py-2 rounded-lg font-mono break-all block mb-8">
+                  {address}
+                </code>
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <Button asChild size="lg" className="w-full">
+                    <Link href="/create-faucet">
+                      <Wallet className="mr-2 h-5 w-5" />
+                      Create Faucet
+                    </Link>
+                  </Button>
+                  <Button asChild size="lg" variant="outline" className="w-full">
+                    <Link href="/faucet/dashboard">
+                      My Faucets <ArrowRight className="ml-2 h-4 w-4" />
+                    </Link>
+                  </Button>
+                </div>
               </div>
             </div>
+          ) : (
+            <div className="bg-card rounded-2xl p-12 border-2 border-dashed">
+              <Wallet className="h-20 w-20 mx-auto mb-6 text-muted-foreground" />
+              <h2 className="text-3xl font-bold mb-4">
+                Open in Warpcast
+              </h2>
+              <p className="text-lg text-muted-foreground max-w-md mx-auto">
+                This app only works inside the Warpcast app. Open this link there to connect your wallet and start creating faucets.
+              </p>
+            </div>
           )}
-
-          {/* Main Content */}
-          <div className="flex flex-col gap-4 sm:gap-6 lg:gap-8">
-            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-              <NetworkGrid />
-            </div>
-            
-            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-              <AnalyticsDashboard /> 
-            </div>
-            
-            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-              <FaucetList />
-            </div>
-          </div>
         </div>
-      </div>      
+      </div>
     </main>
   )
 }

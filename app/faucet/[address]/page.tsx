@@ -4,14 +4,14 @@ import type React from "react"
 import { useEffect, useState, useCallback } from "react"
 import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
-import { useWallet } from "@/hooks/use-wallet"
+import { useWallet } from "@/components/wallet-provider"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import  Header from "@/components/header"
+import { Header} from "@/components/header"
 import {
     getFaucetDetails,
     isWhitelisted,
@@ -477,7 +477,7 @@ export default function FaucetDetails() {
       <main className="min-h-screen bg-background">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
           <div className="flex flex-col gap-6 sm:gap-8 max-w-3xl sm:max-w-4xl mx-auto">
-            <Header />
+            <Header pageTitle="Faucet Details" />
 
             {canAccessAdminControls ? (
               <FaucetAdminView 
