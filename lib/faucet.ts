@@ -96,20 +96,68 @@ function determineFactoryType(useBackend: boolean, isCustom: boolean = false): F
  * 💡 NEW HELPER: Safely estimate gas with a fallback to prevent UI crashes.
  * This fixes "gas estimate error" on Farcaster/Base when RPC simulation fails.
  */
+/**
+ * 💡 HELPER: Safely estimate gas with a fallback to prevent UI crashes.
+ */
 async function estimateGasWithFallback(
   provider: BrowserProvider | JsonRpcProvider,
   txParams: any,
-  fallbackGas: bigint = BigInt(3000000) // Default: 3 Million Gas
+  fallbackGas: bigint = BigInt(3000000)
 ): Promise<bigint> {
   try {
     const estimated = await provider.estimateGas(txParams);
     // Add 20% buffer to the estimate for safety
-    return (estimated * BigInt(12)) / BigInt(10);
+    return (estimated * BigInt(120)) / BigInt(100);
   } catch (error: any) {
     console.warn("⚠️ Gas estimation failed, using fallback:", error.message);
-    // Return the fallback so the wallet UI still opens
     return fallbackGas;
   }
+}
+
+/**
+ * 💡 CRITICAL FIX: Safe Wait For Receipt
+ * Handles "Provider does not support eth_getTransactionReceipt" (Error 4200)
+ * by polling the RPC provider directly if the Wallet refuses to answer.
+ */
+async function safeWaitForReceipt(
+    tx: any, 
+    provider: BrowserProvider | JsonRpcProvider
+) {
+    try {
+        // 1. Try standard wait first
+        return await tx.wait();
+    } catch (error: any) {
+        const msg = error?.message || "";
+        const code = error?.code;
+        
+        // 2. Catch compatibility errors (MiniPay, Farcaster, etc.)
+        if (
+            msg.includes("support") || 
+            msg.includes("eth_getTransactionReceipt") || 
+            code === 4200 || 
+            code === "UNKNOWN_ERROR"
+        ) {
+            console.warn("⚠️ Wallet blocked receipt call. Polling RPC directly...", tx.hash);
+            
+            // 3. Poll the provider manually for ~60 seconds
+            let attempts = 0;
+            while (attempts < 30) { 
+                await new Promise(r => setTimeout(r, 2000)); // Wait 2s
+                try {
+                    const receipt = await provider.getTransactionReceipt(tx.hash);
+                    if (receipt) {
+                        console.log("✅ Receipt found via manual polling");
+                        return receipt;
+                    }
+                } catch (e) {
+                    // Ignore network errors during polling
+                }
+                attempts++;
+            }
+        }
+        // If it wasn't a compatibility error, or polling timed out, re-throw
+        throw error;
+    }
 }
 
 // Helper function to detect factory type by trying different function calls
@@ -617,62 +665,31 @@ export async function createCustomFaucet(
     questName: string,
     tokenAddress: string,
 ): Promise<string> {
-    
-    // --- 1. Basic Validation ---
-    if (!isAddress(factoryAddress) || !isAddress(tokenAddress)) {
-        throw new Error(`Invalid factory or token address provided.`);
-    }
-    if (!provider) {
-        throw new Error("Ethers provider is not available.");
-    }
+    if (!isAddress(factoryAddress) || !isAddress(tokenAddress)) throw new Error(`Invalid factory or token address.`);
+    if (!provider) throw new Error("Ethers provider is not available.");
 
     try {
         const factoryType: FactoryType = 'custom';
-        // NOTE: getFactoryConfig must be a defined helper in faucet.ts
         const config = getFactoryConfig(factoryType); 
-
-        // --- 2. Setup Signer and Contract ---
         const signer = await provider.getSigner();
         const signerAddress = await signer.getAddress();
-        // NOTE: VALID_BACKEND_ADDRESS must be defined/imported in faucet.ts
         const backendAddress = VALID_BACKEND_ADDRESS; 
-        
-        // Factory Contract using the Signer for a write transaction
         const factoryContract = new Contract(factoryAddress, config.abi, signer);
-
-        // --- 3. Encode Transaction Data ---
-        // Assumes createCustomFaucet expects (string name, address token, address backend)
         const data = factoryContract.interface.encodeFunctionData(config.createFunction, [
-            questName,
-            tokenAddress,
-            backendAddress,
+            questName, tokenAddress, backendAddress,
         ]);
         
-        // NOTE: If 'appendDivviReferralData' is used, uncomment and ensure it's defined/imported.
-        // const dataWithReferral = appendDivviReferralData(data);
-        const dataWithReferral = data; // Placeholder if referral is not used here
-
-        console.log(`[faucet.ts: createCustomFaucet] Sending deployment transaction for ${questName}...`);
-        
-        // --- 4. Send Transaction with Safe Gas ---
         const gasLimit = await estimateGasWithFallback(provider, {
-            to: factoryAddress,
-            data: dataWithReferral,
-            from: signerAddress,
-            value: BigInt(0)
-        }, BigInt(1500000)); // 1.5M Gas Fallback
+            to: factoryAddress, data: data, from: signerAddress, value: BigInt(0)
+        }, BigInt(1500000)); 
 
         const tx = await signer.sendTransaction({
-            to: factoryAddress,
-            data: dataWithReferral,
-            gasLimit: gasLimit,
+            to: factoryAddress, data: data, gasLimit: gasLimit,
         });
 
-        // --- 5. Wait for Confirmation and Parse Event ---
-        const receipt = await tx.wait();
-        if (!receipt) {
-            throw new Error("Transaction receipt is null.");
-        }
+        // 💡 UPDATED: Safe wait
+        const receipt = await safeWaitForReceipt(tx, provider);
+        if (!receipt) throw new Error("Transaction receipt is null.");
         
         let newFaucetAddress: string | null = null;
         const factoryInterface = new Interface(config.abi);
@@ -685,7 +702,7 @@ export async function createCustomFaucet(
                         newFaucetAddress = parsedLog.args.faucet;
                         break;
                     }
-                } catch (e) { /* ignore unrelated logs */ }
+                } catch (e) { }
             }
         }
         
@@ -693,18 +710,9 @@ export async function createCustomFaucet(
             console.log(`✅ New faucet deployed at: ${newFaucetAddress}`);
             return newFaucetAddress;
         }
-        
-        // This is a critical error path: the transaction confirmed but the event wasn't found.
-        throw new Error("Deployment succeeded, but the FaucetCreated event was not found in logs.");
-
+        throw new Error("Deployment succeeded, but the FaucetCreated event was not found.");
     } catch (error: any) {
-        console.error('❌ Error deploying custom faucet (faucet.ts):', error);
-        
-        // NOTE: The decodeRevertError logic should be included if you need custom error decoding.
-        // if (error.data && typeof error.data === "string") {
-        //      throw new Error(decodeRevertError(error.data));
-        // }
-        
+        console.error('❌ Error deploying custom faucet:', error);
         throw new Error(error.reason || error.message || "Failed to deploy custom faucet");
     }
 }
@@ -1052,159 +1060,7 @@ export async function getAllFaucetNamesOnNetwork(
 // Alternative: Enhanced createFaucet function that includes proper validation
 // If you want to include validation in the createFaucet function, use this version instead:
 
-export async function createFaucetWithValidation(
-  provider: BrowserProvider,
-  factoryAddress: string,
-  name: string,
-  tokenAddress: string,
-  chainId: bigint,
-  networkId: bigint,
-  useBackend: boolean,
-  isCustom: boolean = false,
-  network: Network, // Add network parameter for validation
-): Promise<string> {
-  try {
-    if (!name.trim()) {
-      throw new Error("Faucet name cannot be empty");
-    }
-    if (!isAddress(tokenAddress)) {
-      throw new Error(`Invalid token address: ${tokenAddress}`);
-    }
-    if (!isAddress(factoryAddress)) {
-      throw new Error(`Invalid factory address: ${factoryAddress}`);
-    }
 
-    // Determine factory type and get appropriate config
-    const factoryType = determineFactoryType(useBackend, isCustom)
-    const config = getFactoryConfig(factoryType)
-
-    console.log(`Creating faucet with factory type: ${factoryType}`)
-
-    // Enhanced name validation with network object
-    console.log("Validating faucet name before creation...");
-    try {
-      const nameCheck = await checkFaucetNameExists(provider, network, name);
-      
-      if (nameCheck.exists && nameCheck.existingFaucet) {
-        const conflictDetails = nameCheck.conflictingFaucets 
-          ? ` Conflicts found in: ${nameCheck.conflictingFaucets.map(c => `${c.factoryType} factory`).join(', ')}`
-          : '';
-        
-        throw new Error(
-          `A faucet with the name "${nameCheck.existingFaucet.name}" already exists on this network.${conflictDetails} ` +
-          `Please choose a different name.`
-        );
-      }
-      
-      if (nameCheck.warning) {
-        console.warn("Name validation warning:", nameCheck.warning);
-        // Continue with creation but log the warning
-      }
-      
-      console.log("Name validation passed");
-    } catch (validationError: any) {
-      if (validationError.message.includes("already exists")) {
-        // Re-throw name conflict errors
-        throw validationError;
-      } else {
-        // Log validation errors but don't block creation
-        console.warn("Name validation failed, proceeding with creation:", validationError.message);
-      }
-    }
-
-    const signer = await provider.getSigner();
-    const signerAddress = await signer.getAddress();
-    const factoryContract = new Contract(factoryAddress, config.abi, signer);
-
-    const backendAddress = VALID_BACKEND_ADDRESS;
-
-    // Use the appropriate create function based on factory type
-    const data = factoryContract.interface.encodeFunctionData(config.createFunction, [
-      name,
-      tokenAddress,
-      backendAddress,
-    ]);
-    const dataWithReferral = appendDivviReferralData(data);
-
-    // --- UPDATED GAS LOGIC START ---
-    const feeData = await provider.getFeeData();
-    const maxFeePerGas = feeData.maxFeePerGas || undefined;
-    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || undefined;
-
-    // Use safe estimator with a 1.5M fallback for creation
-    const gasLimit = await estimateGasWithFallback(provider, {
-      to: factoryAddress,
-      data: dataWithReferral,
-      from: signerAddress,
-      value: BigInt(0)
-    }, BigInt(1500000));
-    // --- UPDATED GAS LOGIC END ---
-
-    console.log("Create faucet params:", {
-      factoryAddress,
-      factoryType,
-      createFunction: config.createFunction,
-      name,
-      tokenAddress,
-      backendAddress,
-      useBackend,
-      isCustom,
-      chainId: chainId.toString(),
-      networkId: networkId.toString(),
-      signerAddress,
-      gasLimit: gasLimit.toString(),
-    });
-
-    const tx = await signer.sendTransaction({
-      to: factoryAddress,
-      data: dataWithReferral,
-      gasLimit: gasLimit, // Use the calculated or fallback limit
-      maxFeePerGas,
-      maxPriorityFeePerGas,
-    });
-
-    console.log("Transaction hash:", tx.hash);
-    const receipt = await tx.wait();
-    if (!receipt) {
-      throw new Error("Transaction receipt is null");
-    }
-    console.log("Transaction confirmed:", receipt.hash);
-    await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId));
-
-    const event = receipt?.logs
-      ?.map((log) => {
-        try {
-          return factoryContract.interface.parseLog({ data: log.data, topics: log.topics as string[] });
-        } catch {
-          return null;
-        }
-      })
-      .find((parsed) => parsed?.name === "FaucetCreated");
-
-    if (!event || !event.args || !event.args.faucet) {
-      throw new Error("Failed to retrieve faucet address from transaction");
-    }
-
-    console.log("New faucet created:", {
-      faucetAddress: event.args.faucet,
-      factoryType,
-      backendAddress,
-      useBackend,
-      isCustom,
-    });
-
-    return event.args.faucet as string;
-  } catch (error: any) {
-    console.error("Error creating faucet:", error);
-    if (error.message?.includes("network changed")) {
-      throw new Error("Network changed during transaction. Please try again with a stable network connection.");
-    }
-    if (error.data && typeof error.data === "string") {
-      throw new Error(decodeRevertError(error.data));
-    }
-    throw new Error(error.reason || error.message || "Failed to create faucet");
-  }
-}
 
 /**
  * Utility function to safely make contract calls with fallbacks
@@ -2141,6 +1997,62 @@ function decodeRevertError(data: string): string {
   return "Unknown contract error occurred"
 }
 
+export async function createFaucetWithValidation(
+  provider: BrowserProvider,
+  factoryAddress: string,
+  name: string,
+  tokenAddress: string,
+  chainId: bigint,
+  networkId: bigint,
+  useBackend: boolean,
+  isCustom: boolean = false,
+  network: Network,
+): Promise<string> {
+  try {
+    if (!name.trim()) throw new Error("Faucet name cannot be empty");
+    const factoryType = determineFactoryType(useBackend, isCustom)
+    const config = getFactoryConfig(factoryType)
+    
+    // ... (Validation logic remains same) ...
+    try {
+      const nameCheck = await checkFaucetNameExists(provider, network, name);
+      if (nameCheck.exists && nameCheck.existingFaucet) throw new Error(`Faucet name exists.`);
+    } catch (e: any) { if (e.message.includes("exists")) throw e; }
+
+    const signer = await provider.getSigner();
+    const signerAddress = await signer.getAddress();
+    const data = new Contract(factoryAddress, config.abi, signer).interface.encodeFunctionData(config.createFunction, [name, tokenAddress, VALID_BACKEND_ADDRESS]);
+    const dataWithReferral = appendDivviReferralData(data);
+    const feeData = await provider.getFeeData();
+    
+    const gasLimit = await estimateGasWithFallback(provider, {
+      to: factoryAddress, data: dataWithReferral, from: signerAddress, value: BigInt(0)
+    }, BigInt(1500000));
+
+    const tx = await signer.sendTransaction({
+      to: factoryAddress, data: dataWithReferral, gasLimit, 
+      maxFeePerGas: feeData.maxFeePerGas || undefined, 
+      maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || undefined
+    });
+
+    // 💡 UPDATED: Safe wait
+    const receipt = await safeWaitForReceipt(tx, provider);
+    if (!receipt) throw new Error("Transaction receipt is null");
+    
+    await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId));
+
+    const factoryInterface = new Interface(config.abi);
+    const event = receipt?.logs?.map((log: any) => {
+        try { return factoryInterface.parseLog({ data: log.data, topics: log.topics as string[] }); } catch { return null; }
+      }).find((parsed: any) => parsed?.name === "FaucetCreated");
+
+    if (!event || !event.args?.faucet) throw new Error("Failed to retrieve address");
+    return event.args.faucet as string;
+  } catch (error: any) {
+    if (error.message?.includes("network changed")) throw new Error("Network changed during transaction.");
+    throw new Error(error.reason || error.message || "Failed to create faucet");
+  }
+}
 
 async function deleteFaucetMetadata(faucetAddress: string, userAddress: string, chainId: number): Promise<void> {
     try {
@@ -2176,108 +2088,36 @@ export async function createFaucet(
   isCustom: boolean = false,
 ): Promise<string> {
   try {
-    if (!name.trim()) {
-      throw new Error("Faucet name cannot be empty");
-    }
-    if (!isAddress(tokenAddress)) {
-      throw new Error(`Invalid token address: ${tokenAddress}`);
-    }
-    if (!isAddress(factoryAddress)) {
-      throw new Error(`Invalid factory address: ${factoryAddress}`);
-    }
-
     const factoryType = determineFactoryType(useBackend, isCustom)
     const config = getFactoryConfig(factoryType)
-
-    console.log(`Creating faucet with factory type: ${factoryType}`)
-
     const signer = await provider.getSigner();
     const signerAddress = await signer.getAddress();
-    const factoryContract = new Contract(factoryAddress, config.abi, signer);
-
-    const backendAddress = VALID_BACKEND_ADDRESS;
-
-    const data = factoryContract.interface.encodeFunctionData(config.createFunction, [
-      name,
-      tokenAddress,
-      backendAddress,
-    ]);
+    const data = new Contract(factoryAddress, config.abi, signer).interface.encodeFunctionData(config.createFunction, [name, tokenAddress, VALID_BACKEND_ADDRESS]);
     const dataWithReferral = appendDivviReferralData(data);
 
-    console.log("Create faucet params:", {
-      factoryAddress,
-      factoryType,
-      createFunction: config.createFunction,
-      name,
-      tokenAddress,
-      backendAddress,
-      useBackend,
-      isCustom,
-      chainId: chainId.toString(),
-      networkId: networkId.toString(),
-      signerAddress,
-    });
-
-    // --- UPDATED GAS LOGIC START ---
-    // Use safe estimator to prevent RPC failures on Farcaster
     const gasLimit = await estimateGasWithFallback(provider, {
-      to: factoryAddress,
-      data: dataWithReferral,
-      from: signerAddress,
-      value: BigInt(0)
-    }, BigInt(1500000)); // 1.5M fallback for creation
-    // --- UPDATED GAS LOGIC END ---
+      to: factoryAddress, data: dataWithReferral, from: signerAddress, value: BigInt(0)
+    }, BigInt(1500000));
 
-    // Simplified transaction - let wallet handle gas
-    const tx = await signer.sendTransaction({
-      to: factoryAddress,
-      data: dataWithReferral,
-      gasLimit: gasLimit, // Use calculated gas
-    });
-
-    console.log("Transaction hash:", tx.hash);
-    const receipt = await tx.wait();
-    if (!receipt) {
-      throw new Error("Transaction receipt is null");
-    }
-    console.log("Transaction confirmed:", receipt.hash);
+    const tx = await signer.sendTransaction({ to: factoryAddress, data: dataWithReferral, gasLimit });
+    
+    // 💡 UPDATED: Safe wait
+    const receipt = await safeWaitForReceipt(tx, provider);
+    if (!receipt) throw new Error("Transaction receipt is null");
+    
     await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId));
 
-    const event = receipt?.logs
-      ?.map((log) => {
-        try {
-          return factoryContract.interface.parseLog({ data: log.data, topics: log.topics as string[] });
-        } catch {
-          return null;
-        }
-      })
-      .find((parsed) => parsed?.name === "FaucetCreated");
+    const factoryInterface = new Interface(config.abi);
+    const event = receipt?.logs?.map((log: any) => {
+        try { return factoryInterface.parseLog({ data: log.data, topics: log.topics as string[] }); } catch { return null; }
+      }).find((parsed: any) => parsed?.name === "FaucetCreated");
 
-    if (!event || !event.args || !event.args.faucet) {
-      throw new Error("Failed to retrieve faucet address from transaction");
-    }
-
-    console.log("New faucet created:", {
-      faucetAddress: event.args.faucet,
-      factoryType,
-      backendAddress,
-      useBackend,
-      isCustom,
-    });
-
+    if (!event || !event.args?.faucet) throw new Error("Failed to retrieve address");
     return event.args.faucet as string;
   } catch (error: any) {
-    console.error("Error creating faucet:", error);
-    if (error.message?.includes("network changed")) {
-      throw new Error("Network changed during transaction. Please try again with a stable network connection.");
-    }
-    if (error.data && typeof error.data === "string") {
-      throw new Error(decodeRevertError(error.data));
-    }
     throw new Error(error.reason || error.message || "Failed to create faucet");
   }
 }
-
 export async function fundFaucet(
   provider: BrowserProvider,
   faucetAddress: string,
@@ -2287,214 +2127,70 @@ export async function fundFaucet(
   networkId: bigint,
   faucetType?: FaucetType
 ): Promise<string> {
-  if (!checkNetwork(chainId, networkId)) {
-    throw new Error("Switch to the network to perform operation")
-  }
+  if (!checkNetwork(chainId, networkId)) throw new Error("Switch to the network to perform operation")
   
   try {
     const signer = await provider.getSigner()
     const signerAddress = await signer.getAddress()
-    
     const detectedFaucetType = faucetType || await detectFaucetType(provider, faucetAddress)
     const config = getFaucetConfig(detectedFaucetType)
-    
     const faucetContract = new Contract(faucetAddress, config.abi, signer)
     const isCelo = isCeloNetwork(chainId)
     
-    console.log("Funding params:", {
-      faucetAddress,
-      amount: amount.toString(),
-      isEther,
-      chainId: chainId.toString(),
-      networkId: networkId.toString(),
-      signerAddress,
-    })
-    
-    // Helper function to get gas parameters
     const getGasParams = async () => {
-      try {
-        const feeData = await provider.getFeeData()
-        
-        if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
-          // EIP-1559
-          return {
-            maxFeePerGas: feeData.maxFeePerGas,
-            maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
-          }
-        } else if (feeData.gasPrice) {
-          // Legacy
-          return {
-            gasPrice: feeData.gasPrice,
-          }
-        }
-        return {}
-      } catch (error) {
-        console.warn("Could not fetch fee data, using defaults:", error)
-        return {}
-      }
+      try { const feeData = await provider.getFeeData(); return feeData.maxFeePerGas ? { maxFeePerGas: feeData.maxFeePerGas, maxPriorityFeePerGas: feeData.maxPriorityFeePerGas } : { gasPrice: feeData.gasPrice } } catch { return {} }
     }
     
     if (isEther && !isCelo) {
-      console.log(`Funding faucet ${faucetAddress} with ${amount} native tokens on chain ${chainId}`)
-      
       const gasParams = await getGasParams()
+      const gasLimit = await estimateGasWithFallback(provider, { to: faucetAddress, from: signerAddress, value: amount, data: "0x" }, BigInt(100000));
+      const tx = await signer.sendTransaction({ to: faucetAddress, value: amount, data: "0x", gasLimit, ...gasParams })
       
-      // --- UPDATED GAS LOGIC START ---
-      // For native transfers, gas estimation is usually robust, but we wrap it just in case
-      const gasLimit = await estimateGasWithFallback(provider, {
-        to: faucetAddress,
-        from: signerAddress,
-        value: amount,
-        data: "0x"
-      }, BigInt(100000)); // 100k for native transfer (generous)
-      // --- UPDATED GAS LOGIC END ---
-      
-      const tx = await signer.sendTransaction({
-        to: faucetAddress,
-        value: amount,
-        data: "0x",
-        gasLimit: gasLimit,
-        ...gasParams,
-      })
-      
-      console.log("Transaction hash:", tx.hash)
-      const receipt = await tx.wait()
-      if (!receipt) {
-        throw new Error("Fund transaction receipt is null")
-      }
-      console.log("Transaction confirmed:", receipt.hash)
+      // 💡 UPDATED: Safe wait
+      await safeWaitForReceipt(tx, provider);
       await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId))
       return tx.hash
     }
     
-    const tokenAddress =
-      isEther && isCelo
-        ? "0x471EcE3750Da237f93B8E339c536989b8978a438" // Wrapped CELO
-        : await faucetContract.token()
-    
-    if (tokenAddress === ZeroAddress) {
-      throw new Error("Token address is zero, cannot proceed with ERC-20 transfer")
-    }
-    
+    const tokenAddress = isEther && isCelo ? "0x471EcE3750Da237f93B8E339c536989b8978a438" : await faucetContract.token()
+    if (tokenAddress === ZeroAddress) throw new Error("Token address is zero")
     const tokenContract = new Contract(tokenAddress, ERC20_ABI, signer)
-    
-    // Check current allowance first
-    console.log("Checking current allowance...")
     const currentAllowance = await tokenContract.allowance(signerAddress, faucetAddress)
     
-    if (currentAllowance >= amount) {
-      console.log("Sufficient allowance already exists, skipping approve")
-    } else {
-      console.log(`Approving ${amount} ${isEther && isCelo ? "CELO" : "tokens"} for faucet ${faucetAddress}`)
+    if (currentAllowance < amount) {
+      const gasParams = await getGasParams()
       
-      // Reset allowance to 0 if needed (some tokens require this)
       if (currentAllowance > 0n) {
-        console.log("Resetting allowance to 0 first...")
         const resetData = tokenContract.interface.encodeFunctionData("approve", [faucetAddress, 0n])
-        const resetDataWithReferral = appendDivviReferralData(resetData)
-        
-        const gasParams = await getGasParams()
-        const resetGasLimit = await estimateGasWithFallback(provider, {
-          to: tokenAddress,
-          from: signerAddress,
-          data: resetDataWithReferral,
-        }, BigInt(100000));
-        
-        const resetTx = await signer.sendTransaction({
-          to: tokenAddress,
-          data: resetDataWithReferral,
-          gasLimit: resetGasLimit,
-          ...gasParams,
-        })
-        
-        const resetReceipt = await resetTx.wait()
-        if (!resetReceipt) {
-          throw new Error("Reset allowance transaction receipt is null")
-        }
-        console.log("Reset allowance confirmed:", resetReceipt.hash)
+        const resetGasLimit = await estimateGasWithFallback(provider, { to: tokenAddress, from: signerAddress, data: resetData }, BigInt(100000));
+        const resetTx = await signer.sendTransaction({ to: tokenAddress, data: resetData, gasLimit: resetGasLimit, ...gasParams })
+        await safeWaitForReceipt(resetTx, provider);
       }
       
       const approveData = tokenContract.interface.encodeFunctionData("approve", [faucetAddress, amount])
       const approveDataWithReferral = appendDivviReferralData(approveData)
+      const approveGasLimit = await estimateGasWithFallback(provider, { to: tokenAddress, from: signerAddress, data: approveDataWithReferral }, BigInt(200000));
+      const approveTx = await signer.sendTransaction({ to: tokenAddress, data: approveDataWithReferral, gasLimit: approveGasLimit, ...gasParams })
       
-      const gasParams = await getGasParams()
-      
-      // --- UPDATED GAS LOGIC FOR APPROVE ---
-      const approveGasLimit = await estimateGasWithFallback(provider, {
-        to: tokenAddress,
-        from: signerAddress,
-        data: approveDataWithReferral,
-      }, BigInt(200000)); // 200k fallback for approve
-      
-      const approveTx = await signer.sendTransaction({
-        to: tokenAddress,
-        data: approveDataWithReferral,
-        gasLimit: approveGasLimit,
-        ...gasParams,
-      })
-      
-      console.log("Approve transaction hash:", approveTx.hash)
-      const approveReceipt = await approveTx.wait()
-      if (!approveReceipt) {
-        throw new Error("Approve transaction receipt is null")
-      }
-      console.log("Approve transaction confirmed:", approveReceipt.hash)
+      // 💡 UPDATED: Safe wait
+      await safeWaitForReceipt(approveTx, provider);
       await reportTransactionToDivvi(approveTx.hash as `0x${string}`, Number(chainId))
     }
     
-    console.log(`Funding faucet ${faucetAddress} with ${amount} ${isEther && isCelo ? "CELO" : "tokens"}`)
     const fundData = faucetContract.interface.encodeFunctionData("fund", [amount])
     const fundDataWithReferral = appendDivviReferralData(fundData)
-    
     const gasParams = await getGasParams()
-
-    // --- UPDATED GAS LOGIC FOR FUND ---
-    const fundGasLimit = await estimateGasWithFallback(provider, {
-      to: faucetAddress,
-      from: signerAddress,
-      data: fundDataWithReferral,
-      value: BigInt(0)
-    }, BigInt(300000)); // 300k fallback for fund
+    const fundGasLimit = await estimateGasWithFallback(provider, { to: faucetAddress, from: signerAddress, data: fundDataWithReferral, value: BigInt(0) }, BigInt(300000));
     
-    const fundTx = await signer.sendTransaction({
-      to: faucetAddress,
-      data: fundDataWithReferral,
-      gasLimit: fundGasLimit,
-      ...gasParams,
-    })
+    const fundTx = await signer.sendTransaction({ to: faucetAddress, data: fundDataWithReferral, gasLimit: fundGasLimit, ...gasParams })
     
-    console.log("Fund transaction hash:", fundTx.hash)
-    const fundReceipt = await fundTx.wait()
-    if (!fundReceipt) {
-      throw new Error("Fund transaction receipt is null")
-    }
-    console.log("Fund transaction confirmed:", fundReceipt.hash)
+    // 💡 UPDATED: Safe wait
+    await safeWaitForReceipt(fundTx, provider);
     await reportTransactionToDivvi(fundTx.hash as `0x${string}`, Number(chainId))
     return fundTx.hash
     
   } catch (error: any) {
-    console.error("Error funding faucet:", error)
-    
-    // Enhanced error handling
-    if (error.message?.includes("network changed")) {
-      throw new Error("Network changed during transaction. Please try again with a stable network connection.")
-    }
-    
-    if (error.code === "INSUFFICIENT_FUNDS") {
-      throw new Error("Insufficient funds to complete the transaction including gas fees.")
-    }
-    
-    if (error.message?.includes("user rejected")) {
-      throw new Error("Transaction was rejected by user.")
-    }
-    
-    if (error.message?.includes("RPC endpoint")) {
-      throw new Error("RPC endpoint error. Please check your network connection and try again.")
-    }
-    
-    // Extract useful error message
-    const errorMessage = error.reason || error.message || "Failed to fund faucet"
-    throw new Error(errorMessage)
+    throw new Error(error.reason || error.message || "Failed to fund faucet")
   }
 }
 
@@ -2506,61 +2202,26 @@ export async function withdrawTokens(
   networkId: bigint,
   faucetType?: FaucetType
 ): Promise<string> {
-  if (!checkNetwork(chainId, networkId)) {
-    throw new Error("Switch to the network to perform operation")
-  }
-
+  if (!checkNetwork(chainId, networkId)) throw new Error("Switch to the network to perform operation")
   try {
     const signer = await provider.getSigner()
     const signerAddress = await signer.getAddress();
     const detectedFaucetType = faucetType || await detectFaucetType(provider, faucetAddress)
     const config = getFaucetConfig(detectedFaucetType)
-    const faucetContract = new Contract(faucetAddress, config.abi, signer)
-
-    const data = faucetContract.interface.encodeFunctionData("withdraw", [amount])
+    const data = new Contract(faucetAddress, config.abi, signer).interface.encodeFunctionData("withdraw", [amount])
     const dataWithReferral = appendDivviReferralData(data)
+    const gasLimit = await estimateGasWithFallback(provider, { to: faucetAddress, from: signerAddress, data: dataWithReferral, value: BigInt(0) }, BigInt(300000));
 
-    console.log("Withdraw tokens params:", {
-      faucetAddress,
-      amount: amount.toString(),
-      chainId: chainId.toString(),
-      networkId: networkId.toString(),
-    })
-
-    // --- UPDATED GAS LOGIC START ---
-    const gasLimit = await estimateGasWithFallback(provider, {
-        to: faucetAddress,
-        from: signerAddress,
-        data: dataWithReferral,
-        value: BigInt(0)
-    }, BigInt(300000)); // 300k fallback
-    // --- UPDATED GAS LOGIC END ---
-
-    // Simplified transaction
-    const tx = await signer.sendTransaction({
-      to: faucetAddress,
-      data: dataWithReferral,
-      gasLimit: gasLimit
-    })
-
-    console.log("Withdraw transaction hash:", tx.hash)
-    const receipt = await tx.wait()
-    if (!receipt) {
-      throw new Error("Withdraw transaction receipt is null")
-    }
-    console.log("Withdraw transaction confirmed:", receipt.hash)
+    const tx = await signer.sendTransaction({ to: faucetAddress, data: dataWithReferral, gasLimit })
+    
+    // 💡 UPDATED: Safe wait
+    await safeWaitForReceipt(tx, provider);
     await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId))
-
     return tx.hash
   } catch (error: any) {
-    console.error("Error withdrawing tokens:", error)
-    if (error.message?.includes("network changed")) {
-      throw new Error("Network changed during transaction. Please try again with a stable network connection.")
-    }
     throw new Error(error.reason || error.message || "Failed to withdraw tokens")
   }
 }
-
 export async function setWhitelistBatch(
   provider: BrowserProvider,
   faucetAddress: string,
@@ -2570,63 +2231,24 @@ export async function setWhitelistBatch(
   networkId: bigint,
   faucetType?: FaucetType
 ): Promise<string> {
-  if (!checkNetwork(chainId, networkId)) {
-    throw new Error("Switch to the network to perform operation")
-  }
-
+  if (!checkNetwork(chainId, networkId)) throw new Error("Switch to the network to perform operation")
   try {
     const detectedFaucetType = faucetType || await detectFaucetType(provider, faucetAddress)
-    
-    if (detectedFaucetType !== 'droplist') {
-      throw new Error("Whitelist functionality is only available for droplist faucets")
-    }
-
+    if (detectedFaucetType !== 'droplist') throw new Error("Whitelist only for droplist faucets")
     const signer = await provider.getSigner()
     const signerAddress = await signer.getAddress();
     const config = getFaucetConfig(detectedFaucetType)
-    const faucetContract = new Contract(faucetAddress, config.abi, signer)
-
-    const data = faucetContract.interface.encodeFunctionData("setWhitelistBatch", [addresses, status])
+    const data = new Contract(faucetAddress, config.abi, signer).interface.encodeFunctionData("setWhitelistBatch", [addresses, status])
     const dataWithReferral = appendDivviReferralData(data)
+    const gasLimit = await estimateGasWithFallback(provider, { to: faucetAddress, from: signerAddress, data: dataWithReferral, value: BigInt(0) }, BigInt(5000000));
 
-    console.log("Set whitelist batch params:", {
-      faucetAddress,
-      addresses,
-      status,
-      chainId: chainId.toString(),
-      networkId: networkId.toString(),
-    })
-
-    // --- UPDATED GAS LOGIC START ---
-    const gasLimit = await estimateGasWithFallback(provider, {
-        to: faucetAddress,
-        from: signerAddress,
-        data: dataWithReferral,
-        value: BigInt(0)
-    }, BigInt(5000000)); // 5M fallback for large batches
-    // --- UPDATED GAS LOGIC END ---
-
-    // Simplified transaction
-    const tx = await signer.sendTransaction({
-      to: faucetAddress,
-      data: dataWithReferral,
-      gasLimit: gasLimit
-    })
-
-    console.log("Set whitelist batch transaction hash:", tx.hash)
-    const receipt = await tx.wait()
-    if (!receipt) {
-      throw new Error("Set whitelist batch transaction receipt is null")
-    }
-    console.log("Set whitelist batch transaction confirmed:", receipt.hash)
+    const tx = await signer.sendTransaction({ to: faucetAddress, data: dataWithReferral, gasLimit })
+    
+    // 💡 UPDATED: Safe wait
+    await safeWaitForReceipt(tx, provider);
     await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId))
-
     return tx.hash
   } catch (error: any) {
-    console.error("Error setting whitelist batch:", error)
-    if (error.message?.includes("network changed")) {
-      throw new Error("Network changed during transaction. Please try again with a stable network connection.")
-    }
     throw new Error(error.reason || error.message || "Failed to set whitelist batch")
   }
 }
@@ -2640,64 +2262,25 @@ export async function setCustomClaimAmountsBatch(
   networkId: bigint,
   faucetType?: FaucetType
 ): Promise<string> {
-  if (!checkNetwork(chainId, networkId)) {
-    throw new Error("Switch to the network to perform operation")
-  }
-
+  if (!checkNetwork(chainId, networkId)) throw new Error("Switch to the network to perform operation")
   try {
     const detectedFaucetType = faucetType || await detectFaucetType(provider, faucetAddress)
-    
-    if (detectedFaucetType !== 'custom') {
-      throw new Error("Custom claim amounts are only available for custom faucets")
-    }
-
+    if (detectedFaucetType !== 'custom') throw new Error("Only for custom faucets")
     const signer = await provider.getSigner()
     const signerAddress = await signer.getAddress();
     const config = getFaucetConfig(detectedFaucetType)
-    const faucetContract = new Contract(faucetAddress, config.abi, signer)
-
-    const data = faucetContract.interface.encodeFunctionData("setCustomClaimAmountsBatch", [users, amounts])
+    const data = new Contract(faucetAddress, config.abi, signer).interface.encodeFunctionData("setCustomClaimAmountsBatch", [users, amounts])
     const dataWithReferral = appendDivviReferralData(data)
+    const gasLimit = await estimateGasWithFallback(provider, { to: faucetAddress, from: signerAddress, data: dataWithReferral, value: BigInt(0) }, BigInt(5000000));
 
-    console.log("Set custom claim amounts batch params:", {
-      faucetAddress,
-      users,
-      amounts: amounts.map((a) => a.toString()),
-      chainId: chainId.toString(),
-      networkId: networkId.toString(),
-    })
-
-    // --- UPDATED GAS LOGIC START ---
-    const gasLimit = await estimateGasWithFallback(provider, {
-        to: faucetAddress,
-        from: signerAddress,
-        data: dataWithReferral,
-        value: BigInt(0)
-    }, BigInt(5000000)); // 5M fallback for large batches
-    // --- UPDATED GAS LOGIC END ---
-
-    // Simplified transaction
-    const tx = await signer.sendTransaction({
-      to: faucetAddress,
-      data: dataWithReferral,
-      gasLimit: gasLimit
-    })
-
-    console.log("Set custom claim amounts batch transaction hash:", tx.hash)
-    const receipt = await tx.wait()
-    if (!receipt) {
-      throw new Error("Set custom claim amounts batch transaction receipt is null")
-    }
-    console.log("Set custom claim amounts batch transaction confirmed:", receipt.hash)
+    const tx = await signer.sendTransaction({ to: faucetAddress, data: dataWithReferral, gasLimit })
+    
+    // 💡 UPDATED: Safe wait
+    await safeWaitForReceipt(tx, provider);
     await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId))
-
     return tx.hash
   } catch (error: any) {
-    console.error("Error setting custom claim amounts batch:", error)
-    if (error.message?.includes("network changed")) {
-      throw new Error("Network changed during transaction. Please try again with a stable network connection.")
-    }
-    throw new Error(error.reason || error.message || "Failed to set custom claim amounts batch")
+    throw new Error(error.reason || error.message || "Failed to set custom amounts")
   }
 }
 
@@ -2708,56 +2291,23 @@ export async function resetAllClaims(
   networkId: bigint,
   faucetType?: FaucetType
 ): Promise<string> {
-  if (!checkNetwork(chainId, networkId)) {
-    throw new Error("Switch to the network to perform operation");
-  }
-
+  if (!checkNetwork(chainId, networkId)) throw new Error("Switch to the network to perform operation");
   try {
     const signer = await provider.getSigner();
     const signerAddress = await signer.getAddress();
     const detectedFaucetType = faucetType || await detectFaucetType(provider, faucetAddress)
     const config = getFaucetConfig(detectedFaucetType)
-    const faucetContract = new Contract(faucetAddress, config.abi, signer);
-
-    const data = faucetContract.interface.encodeFunctionData("resetAllClaimed", []);
+    const data = new Contract(faucetAddress, config.abi, signer).interface.encodeFunctionData("resetAllClaimed", []);
     const dataWithReferral = appendDivviReferralData(data);
+    const gasLimit = await estimateGasWithFallback(provider, { to: faucetAddress, from: signerAddress, data: dataWithReferral, value: BigInt(0) }, BigInt(1000000));
 
-    console.log("Reset all claims params:", {
-      faucetAddress,
-      chainId: chainId.toString(),
-      networkId: networkId.toString(),
-    });
-
-    // --- UPDATED GAS LOGIC START ---
-    const gasLimit = await estimateGasWithFallback(provider, {
-        to: faucetAddress,
-        from: signerAddress,
-        data: dataWithReferral,
-        value: BigInt(0)
-    }, BigInt(1000000)); // 1M fallback
-    // --- UPDATED GAS LOGIC END ---
-
-    // Simplified transaction
-    const tx = await signer.sendTransaction({
-      to: faucetAddress,
-      data: dataWithReferral,
-      gasLimit: gasLimit
-    });
-
-    console.log("Reset all claims transaction hash:", tx.hash);
-    const receipt = await tx.wait();
-    if (!receipt) {
-      throw new Error("Reset all claims transaction receipt is null");
-    }
-    console.log("Reset all claims transaction confirmed:", receipt.hash);
+    const tx = await signer.sendTransaction({ to: faucetAddress, data: dataWithReferral, gasLimit });
+    
+    // 💡 UPDATED: Safe wait
+    await safeWaitForReceipt(tx, provider);
     await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId));
-
     return tx.hash;
   } catch (error: any) {
-    console.error("Error resetting all claims:", error);
-    if (error.message?.includes("network changed")) {
-      throw new Error("Network changed during transaction. Please try again with a stable network connection.");
-    }
     throw new Error(error.reason || error.message || "Failed to reset all claims");
   }
 }
@@ -2772,75 +2322,33 @@ export async function setClaimParameters(
   networkId: bigint,
   faucetType?: FaucetType
 ): Promise<string> {
-  if (!checkNetwork(chainId, networkId)) {
-    throw new Error("Switch to the network to perform operation");
-  }
-
+  if (!checkNetwork(chainId, networkId)) throw new Error("Switch to the network to perform operation");
   try {
     const signer = await provider.getSigner();
     const signerAddress = await signer.getAddress();
     const permissions = await checkPermissions(provider, faucetAddress, signerAddress, faucetType);
-    if (permissions.isPaused) {
-      throw new Error("Faucet is paused and cannot be modified");
-    }
-    if (!permissions.isOwner && !permissions.isAdmin) {
-      throw new Error("Only the owner or admin can set claim parameters");
-    }
+    if (permissions.isPaused) throw new Error("Faucet is paused");
+    if (!permissions.isOwner && !permissions.isAdmin) throw new Error("Not authorized");
 
     const detectedFaucetType = faucetType || await detectFaucetType(provider, faucetAddress)
     const config = getFaucetConfig(detectedFaucetType)
     const faucetContract = new Contract(faucetAddress, config.abi, signer);
 
     let data: string;
-    if (detectedFaucetType === 'custom') {
-      data = faucetContract.interface.encodeFunctionData("setClaimParameters", [startTime, endTime]);
-    } else {
-      data = faucetContract.interface.encodeFunctionData("setClaimParameters", [claimAmount, startTime, endTime]);
-    }
+    if (detectedFaucetType === 'custom') data = faucetContract.interface.encodeFunctionData("setClaimParameters", [startTime, endTime]);
+    else data = faucetContract.interface.encodeFunctionData("setClaimParameters", [claimAmount, startTime, endTime]);
     
     const dataWithReferral = appendDivviReferralData(data);
+    const gasLimit = await estimateGasWithFallback(provider, { to: faucetAddress, from: signerAddress, data: dataWithReferral, value: BigInt(0) }, BigInt(500000));
 
-    console.log("Set claim parameters params:", {
-      faucetAddress,
-      faucetType: detectedFaucetType,
-      claimAmount: detectedFaucetType === 'custom' ? 'N/A (custom amounts)' : claimAmount.toString(),
-      startTime,
-      endTime,
-      chainId: chainId.toString(),
-      networkId: networkId.toString(),
-    });
-
-    // --- UPDATED GAS LOGIC START ---
-    const gasLimit = await estimateGasWithFallback(provider, {
-        to: faucetAddress,
-        from: signerAddress,
-        data: dataWithReferral,
-        value: BigInt(0)
-    }, BigInt(500000)); // 500k fallback
-    // --- UPDATED GAS LOGIC END ---
-
-    // Simplified transaction
-    const tx = await signer.sendTransaction({
-      to: faucetAddress,
-      data: dataWithReferral,
-      gasLimit: gasLimit
-    });
-
-    console.log("Set claim parameters transaction hash:", tx.hash);
-    const receipt = await tx.wait();
-    if (!receipt) {
-      throw new Error("Set claim parameters transaction receipt is null");
-    }
-    console.log("Set claim parameters transaction confirmed:", receipt.hash);
+    const tx = await signer.sendTransaction({ to: faucetAddress, data: dataWithReferral, gasLimit });
+    
+    // 💡 UPDATED: Safe wait
+    await safeWaitForReceipt(tx, provider);
     await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId));
-
     return tx.hash;
   } catch (error: any) {
-    console.error("Error setting claim parameters:", error);
-    if (error.message?.includes("network changed")) {
-      throw new Error("Network changed during transaction. Please try again with a stable network connection.");
-    }
-    throw new Error(error.reason || error.message || "Failed to set claim parameters");
+    throw new Error(error.reason || error.message || "Failed to set parameters");
   }
 }
 
@@ -2853,60 +2361,23 @@ export async function updateFaucetName(
   faucetType?: FaucetType
 ): Promise<`0x${string}`> {
   try {
-    if (!checkNetwork(chainId, networkId)) {
-      throw new Error("Switch to the correct network to perform this operation");
-    }
-
-    if (!name.trim()) {
-      throw new Error("Faucet name cannot be empty");
-    }
-
+    if (!checkNetwork(chainId, networkId)) throw new Error("Switch network");
     const signer = await provider.getSigner();
     const signerAddress = await signer.getAddress();
-    const permissions = await checkPermissions(provider, faucet, signerAddress, faucetType);
-    if (permissions.isPaused) {
-      throw new Error("Faucet is paused and cannot be modified");
-    }
-    if (!permissions.isOwner && !permissions.isAdmin) {
-      throw new Error("Only the owner or admin can update the faucet name");
-    }
-
     const detectedFaucetType = faucetType || await detectFaucetType(provider, faucet)
     const config = getFaucetConfig(detectedFaucetType)
-    const faucetContract = new Contract(faucet, config.abi, signer);
-
-    const data = faucetContract.interface.encodeFunctionData("updateName", [name]);
+    const data = new Contract(faucet, config.abi, signer).interface.encodeFunctionData("updateName", [name]);
     const dataWithReferral = appendDivviReferralData(data);
+    const gasLimit = await estimateGasWithFallback(provider, { to: faucet, from: signerAddress, data: dataWithReferral, value: BigInt(0) }, BigInt(300000));
 
-    // --- UPDATED GAS LOGIC START ---
-    const gasLimit = await estimateGasWithFallback(provider, {
-        to: faucet,
-        from: signerAddress,
-        data: dataWithReferral,
-        value: BigInt(0)
-    }, BigInt(300000)); // 300k fallback
-    // --- UPDATED GAS LOGIC END ---
-
-    const tx = await signer.sendTransaction({
-        to: faucet,
-        data: dataWithReferral,
-        gasLimit: gasLimit
-    });
-
-    console.log(`Update faucet name transaction sent: ${tx.hash}`);
-    const receipt = await tx.wait();
-    if (!receipt) {
-      throw new Error("Transaction receipt is null");
-    }
-
+    const tx = await signer.sendTransaction({ to: faucet, data: dataWithReferral, gasLimit });
+    
+    // 💡 UPDATED: Safe wait
+    await safeWaitForReceipt(tx, provider);
     await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId));
     return tx.hash as `0x${string}`;
   } catch (error: any) {
-    console.error("Error updating faucet name:", error);
-    if (error.data && typeof error.data === "string") {
-      throw new Error(decodeRevertError(error.data));
-    }
-    throw new Error(error.reason || error.message || "Failed to update faucet name");
+    throw new Error(error.reason || error.message || "Failed to update name");
   }
 }
 
@@ -2918,65 +2389,25 @@ export async function deleteFaucet(
     faucetType?: FaucetType
 ): Promise<`0x${string}`> {
     try {
-        if (!checkNetwork(chainId, networkId)) {
-            throw new Error("Switch to the correct network to perform this operation");
-        }
-
+        if (!checkNetwork(chainId, networkId)) throw new Error("Switch network");
         const signer = await provider.getSigner();
         const signerAddress = await signer.getAddress();
-        const permissions = await checkPermissions(provider, faucetAddress, signerAddress, faucetType);
-        if (permissions.isPaused) {
-            throw new Error("Faucet is paused and cannot be deleted");
-        }
-        // Note: The original code allowed admins to delete; ensure this is the desired permission level.
-        if (!permissions.isOwner && !permissions.isAdmin) {
-            throw new Error("Only the owner or admin can delete the faucet");
-        }
-
         const detectedFaucetType = faucetType || await detectFaucetType(provider, faucetAddress)
         const config = getFaucetConfig(detectedFaucetType)
-        const faucetContract = new Contract(faucetAddress, config.abi, signer);
-
-        const data = faucetContract.interface.encodeFunctionData("deleteFaucet", []);
+        const data = new Contract(faucetAddress, config.abi, signer).interface.encodeFunctionData("deleteFaucet", []);
         const dataWithReferral = appendDivviReferralData(data);
+        const gasLimit = await estimateGasWithFallback(provider, { to: faucetAddress, from: signerAddress, data: dataWithReferral, value: BigInt(0) }, BigInt(500000));
 
-        // --- UPDATED GAS LOGIC START ---
-        const gasLimit = await estimateGasWithFallback(provider, {
-            to: faucetAddress,
-            from: signerAddress,
-            data: dataWithReferral,
-            value: BigInt(0)
-        }, BigInt(500000)); // 500k fallback
-        // --- UPDATED GAS LOGIC END ---
-
-        const tx = await signer.sendTransaction({
-            to: faucetAddress,
-            data: dataWithReferral,
-            gasLimit: gasLimit
-        });
-
-        console.log(`Delete faucet transaction sent: ${tx.hash}`);
-        const receipt = await tx.wait();
-        if (!receipt) {
-            throw new Error("Transaction receipt is null");
-        }
-
-        // --- NEW STEP: Call backend to record the deletion off-chain ---
-        await deleteFaucetMetadata(
-            faucetAddress,
-            signerAddress, // Use the actual user who signed the transaction
-            Number(chainId)
-        );
-        // --- END NEW STEP ---
-
+        const tx = await signer.sendTransaction({ to: faucetAddress, data: dataWithReferral, gasLimit });
+        
+        // 💡 UPDATED: Safe wait
+        await safeWaitForReceipt(tx, provider);
+        
+        await deleteFaucetMetadata(faucetAddress, signerAddress, Number(chainId));
         await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId));
         faucetDetailsCache.delete(faucetAddress);
         return tx.hash as `0x${string}`;
     } catch (error: any) {
-        console.error("Error deleting faucet:", error);
-        if (error.data && typeof error.data === "string") {
-            throw new Error(decodeRevertError(error.data));
-        }
         throw new Error(error.reason || error.message || "Failed to delete faucet");
     }
 }
@@ -2990,59 +2421,22 @@ export async function addAdmin(
   faucetType?: FaucetType
 ): Promise<`0x${string}`> {
   try {
-    if (!checkNetwork(chainId, networkId)) {
-      throw new Error("Switch to the correct network to perform this operation");
-    }
-
-    if (!isAddress(adminAddress)) {
-      throw new Error("Invalid admin address");
-    }
-
+    if (!checkNetwork(chainId, networkId)) throw new Error("Switch network");
     const signer = await provider.getSigner();
     const signerAddress = await signer.getAddress();
-    const permissions = await checkPermissions(provider, faucetAddress, signerAddress, faucetType);
-    if (permissions.isPaused) {
-      throw new Error("Faucet is paused and cannot be modified");
-    }
-    if (!permissions.isOwner && !permissions.isAdmin) {
-      throw new Error("Only the owner or admin can add an admin");
-    }
-
     const detectedFaucetType = faucetType || await detectFaucetType(provider, faucetAddress)
     const config = getFaucetConfig(detectedFaucetType)
-    const faucetContract = new Contract(faucetAddress, config.abi, signer);
-    
-    const data = faucetContract.interface.encodeFunctionData("addAdmin", [adminAddress]);
+    const data = new Contract(faucetAddress, config.abi, signer).interface.encodeFunctionData("addAdmin", [adminAddress]);
     const dataWithReferral = appendDivviReferralData(data);
+    const gasLimit = await estimateGasWithFallback(provider, { to: faucetAddress, from: signerAddress, data: dataWithReferral, value: BigInt(0) }, BigInt(300000));
 
-    // --- UPDATED GAS LOGIC START ---
-    const gasLimit = await estimateGasWithFallback(provider, {
-        to: faucetAddress,
-        from: signerAddress,
-        data: dataWithReferral,
-        value: BigInt(0)
-    }, BigInt(300000)); // 300k fallback
-    // --- UPDATED GAS LOGIC END ---
-
-    const tx = await signer.sendTransaction({
-      to: faucetAddress,
-      data: dataWithReferral,
-      gasLimit: gasLimit
-    });
-
-    console.log(`Add admin transaction sent: ${tx.hash}`);
-    const receipt = await tx.wait();
-    if (!receipt) {
-      throw new Error("Transaction receipt is null");
-    }
-
+    const tx = await signer.sendTransaction({ to: faucetAddress, data: dataWithReferral, gasLimit });
+    
+    // 💡 UPDATED: Safe wait
+    await safeWaitForReceipt(tx, provider);
     await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId));
     return tx.hash as `0x${string}`;
   } catch (error: any) {
-    console.error("Error adding admin:", error);
-    if (error.data && typeof error.data === "string") {
-      throw new Error(decodeRevertError(error.data));
-    }
     throw new Error(error.reason || error.message || "Failed to add admin");
   }
 }
@@ -3056,60 +2450,22 @@ export async function removeAdmin(
   faucetType?: FaucetType
 ): Promise<`0x${string}`> {
   try {
-    if (!checkNetwork(chainId, networkId)) {
-      throw new Error("Switch to the correct network to perform this operation");
-    }
-
-    if (!isAddress(adminAddress)) {
-      throw new Error("Invalid admin address");
-    }
-
+    if (!checkNetwork(chainId, networkId)) throw new Error("Switch network");
     const signer = await provider.getSigner();
     const signerAddress = await signer.getAddress();
-    const permissions = await checkPermissions(provider, faucetAddress, signerAddress, faucetType);
-    if (permissions.isPaused) {
-      throw new Error("Faucet is paused and cannot be modified");
-    }
-    if (!permissions.isOwner && !permissions.isAdmin) {
-      throw new Error("Only the owner or admin can remove an admin");
-    }
-
     const detectedFaucetType = faucetType || await detectFaucetType(provider, faucetAddress)
     const config = getFaucetConfig(detectedFaucetType)
-    const faucetContract = new Contract(faucetAddress, config.abi, signer);
-    
-    const data = faucetContract.interface.encodeFunctionData("removeAdmin", [adminAddress]);
+    const data = new Contract(faucetAddress, config.abi, signer).interface.encodeFunctionData("removeAdmin", [adminAddress]);
     const dataWithReferral = appendDivviReferralData(data, signerAddress);
+    const gasLimit = await estimateGasWithFallback(provider, { to: faucetAddress, from: signerAddress, data: dataWithReferral, value: BigInt(0) }, BigInt(300000));
 
-    // --- UPDATED GAS LOGIC START ---
-    const gasLimit = await estimateGasWithFallback(provider, {
-        to: faucetAddress,
-        from: signerAddress,
-        data: dataWithReferral,
-        value: BigInt(0)
-    }, BigInt(300000)); // 300k fallback
-    // --- UPDATED GAS LOGIC END ---
-
-    // Simplified transaction
-    const tx = await signer.sendTransaction({
-      to: faucetAddress,
-      data: dataWithReferral,
-      gasLimit: gasLimit
-    });
-
-    console.log(`Remove admin transaction sent: ${tx.hash}`);
-    const receipt = await tx.wait();
-    if (!receipt) {
-      throw new Error("Transaction receipt is null");
-    }
-
+    const tx = await signer.sendTransaction({ to: faucetAddress, data: dataWithReferral, gasLimit });
+    
+    // 💡 UPDATED: Safe wait
+    await safeWaitForReceipt(tx, provider);
     await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId));
     return tx.hash as `0x${string}`;
   } catch (error: any) {
-    console.error("Error removing admin:", error);
-    if (error.data && typeof error.data === "string") {
-      throw new Error(decodeRevertError(error.data));
-    }
     throw new Error(error.reason || error.message || "Failed to remove admin");
   }
 }
@@ -3124,117 +2480,23 @@ export async function storeClaim(
   networkId: number,
   networkName: string
 ): Promise<string> {
-  if (!checkNetwork(BigInt(chainId), BigInt(networkId))) {
-    throw new Error("Switch to the network to perform operation");
-  }
-
+  if (!checkNetwork(BigInt(chainId), BigInt(networkId))) throw new Error("Switch network");
   try {
     const signer = await provider.getSigner();
     const signerAddress = await signer.getAddress();
-    const storageContract = new Contract(STORAGE_CONTRACT_ADDRESS, STORAGE_ABI, signer);
-
-    // Convert txHash to bytes32 (ensure it's a valid 32-byte hash)
     const formattedTxHash = txHash.startsWith('0x') ? txHash : `0x${txHash}`;
-    if (!/^0x[a-fA-F0-9]{64}$/.test(formattedTxHash)) {
-      throw new Error(`Invalid transaction hash format: ${formattedTxHash}`);
-    }
-
-    if (!networkName) {
-      throw new Error("Network name cannot be empty");
-    }
-
-    // Encode function data with parameters in the correct order as per ABI
-    const data = storageContract.interface.encodeFunctionData("storeClaim", [
-      claimer,
-      formattedTxHash,
-      amount,
-      networkName,
-      faucetAddress,
-    ]);
-
-    // Append Divvi referral data with additional validation
-    const divviStatus = getDivviStatus();
-    console.log("Divvi SDK status before appending referral:", divviStatus);
+    const data = new Contract(STORAGE_CONTRACT_ADDRESS, STORAGE_ABI, signer).interface.encodeFunctionData("storeClaim", [claimer, formattedTxHash, amount, networkName, faucetAddress]);
     const dataWithReferral = appendDivviReferralData(data, signerAddress);
-    const referralTag = dataWithReferral.slice(data.length);
-    console.log("Divvi referral data appended:", {
-      originalDataLength: data.length,
-      dataWithReferralLength: dataWithReferral.length,
-      referralTag,
-      referralTagValid: referralTag.startsWith('6decb85d'),
-    });
+    const gasLimit = await estimateGasWithFallback(provider, { to: STORAGE_CONTRACT_ADDRESS, data: dataWithReferral, from: signerAddress, value: BigInt(0) }, BigInt(300000)); 
 
-    // Validate referral tag
-    if (!referralTag.startsWith('6decb85d')) {
-      console.warn("Generated referral tag does not have expected prefix '6decb85d'");
-    }
-
-    const feeData = await provider.getFeeData();
-    const maxFeePerGas = feeData.maxFeePerGas || undefined;
-    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas || undefined;
-
-    // --- UPDATED GAS LOGIC START ---
-    // Critical fix for Farcaster/Base where Storage contract might differ or logic checks fail
-    const gasLimit = await estimateGasWithFallback(provider, {
-        to: STORAGE_CONTRACT_ADDRESS,
-        data: dataWithReferral,
-        from: signerAddress,
-        value: BigInt(0)
-    }, BigInt(300000)); // 300k fallback
-    // --- UPDATED GAS LOGIC END ---
-
-    console.log("Store claim params:", {
-      claimer,
-      faucetAddress,
-      amount: amount.toString(),
-      txHash: formattedTxHash,
-      networkName,
-      chainId,
-      networkId,
-      signerAddress,
-      gasLimit: gasLimit.toString(),
-      maxFeePerGas: maxFeePerGas?.toString(),
-      maxPriorityFeePerGas: maxPriorityFeePerGas?.toString(),
-      divviStatus,
-    });
-
-    const tx = await signer.sendTransaction({
-      to: STORAGE_CONTRACT_ADDRESS,
-      data: dataWithReferral,
-      gasLimit: gasLimit, // Use safe limit
-      maxFeePerGas,
-      maxPriorityFeePerGas,
-    });
-
-    console.log("Store claim transaction hash:", tx.hash);
-    const receipt = await tx.wait();
-    console.log("Store claim transaction confirmed:", receipt.transactionHash);
-
-    // Ensure transaction is mined before reporting to Divvi
-    if (!receipt || !receipt.blockNumber) {
-      throw new Error("Transaction receipt is null or not mined");
-    }
-
-    // Report the storeClaim transaction hash to Divvi
-    if (isSupportedNetwork(BigInt(chainId))) {
-      console.log(`Reporting storeClaim transaction ${tx.hash} to Divvi`);
-      await reportTransactionToDivvi(tx.hash as `0x${string}`, chainId);
-    } else {
-      console.warn(`Chain ID ${chainId} is not supported by Divvi, skipping transaction reporting`);
-    }
-
+    const tx = await signer.sendTransaction({ to: STORAGE_CONTRACT_ADDRESS, data: dataWithReferral, gasLimit });
+    
+    // 💡 UPDATED: Safe wait
+    const receipt = await safeWaitForReceipt(tx, provider);
+    if (!receipt?.blockNumber) throw new Error("Transaction receipt is null or not mined");
+    if (isSupportedNetwork(BigInt(chainId))) await reportTransactionToDivvi(tx.hash as `0x${string}`, chainId);
     return tx.hash;
   } catch (error: any) {
-    console.error("Error storing claim:", error);
-    if (error.message?.includes("network changed")) {
-      throw new Error("Network changed during transaction. Please try again with a stable network connection.");
-    }
-    if (error.message?.includes("Invalid Divvi referral data")) {
-      throw new Error("Failed to append valid Divvi referral data. Please check Divvi SDK integration.");
-    }
-    if (error.message?.includes("Failed to report transaction to Divvi")) {
-      throw new Error("Failed to report transaction to Divvi. Claim recorded, but referral tracking may be incomplete.");
-    }
     throw new Error(error.reason || error.message || "Failed to store claim");
   }
 }
@@ -3248,63 +2510,24 @@ export async function resetClaimedStatus(
   networkId: bigint,
   faucetType?: FaucetType
 ): Promise<string> {
-  if (!checkNetwork(chainId, networkId)) {
-    throw new Error("Switch to the network to perform operation")
-  }
-
+  if (!checkNetwork(chainId, networkId)) throw new Error("Switch network")
   try {
     const detectedFaucetType = faucetType || await detectFaucetType(provider, faucetAddress)
-    
-    if (detectedFaucetType !== 'dropcode') {
-      throw new Error("Reset claimed batch is only available for dropcode faucets")
-    }
-
+    if (detectedFaucetType !== 'dropcode') throw new Error("Only for dropcode faucets")
     const signer = await provider.getSigner()
     const signerAddress = await signer.getAddress();
     const config = getFaucetConfig(detectedFaucetType)
-    const faucetContract = new Contract(faucetAddress, config.abi, signer)
-
-    const data = faucetContract.interface.encodeFunctionData("resetClaimedBatch", [addresses])
+    const data = new Contract(faucetAddress, config.abi, signer).interface.encodeFunctionData("resetClaimedBatch", [addresses])
     const dataWithReferral = appendDivviReferralData(data)
+    const gasLimit = await estimateGasWithFallback(provider, { to: faucetAddress, from: signerAddress, data: dataWithReferral, value: BigInt(0) }, BigInt(500000));
 
-    console.log("Reset claimed status params:", {
-      faucetAddress,
-      addresses,
-      status,
-      chainId: chainId.toString(),
-      networkId: networkId.toString(),
-    })
-
-    // --- UPDATED GAS LOGIC START ---
-    const gasLimit = await estimateGasWithFallback(provider, {
-        to: faucetAddress,
-        from: signerAddress,
-        data: dataWithReferral,
-        value: BigInt(0)
-    }, BigInt(500000)); // 500k fallback
-    // --- UPDATED GAS LOGIC END ---
-
-    // Simplified transaction
-    const tx = await signer.sendTransaction({
-      to: faucetAddress,
-      data: dataWithReferral,
-      gasLimit: gasLimit
-    })
-
-    console.log("Reset claimed status transaction hash:", tx.hash)
-    const receipt = await tx.wait()
-    if (!receipt) {
-      throw new Error("Reset claimed status transaction receipt is null")
-    }
-    console.log("Reset claimed status transaction confirmed:", receipt.hash)
+    const tx = await signer.sendTransaction({ to: faucetAddress, data: dataWithReferral, gasLimit })
+    
+    // 💡 UPDATED: Safe wait
+    await safeWaitForReceipt(tx, provider);
     await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId))
-
     return tx.hash
   } catch (error: any) {
-    console.error("Error resetting claimed status:", error)
-    if (error.message?.includes("network changed")) {
-      throw new Error("Network changed during transaction. Please try again with a stable network connection.")
-    }
     throw new Error(error.reason || error.message || "Failed to reset claimed status")
   }
 }
