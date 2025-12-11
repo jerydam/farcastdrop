@@ -6,12 +6,12 @@
   },
   "frame": {
     "version": "1",
-    "name": "Example Frame",
-    "iconUrl": "https://cast.faucetdrops.io/favicon.png",
+    "name": "Faucetdrops",
+    "iconUrl": "https://cast.faucetdrops.io/icon.png",
     "homeUrl": "https://cast.faucetdrops.io",
-    "imageUrl": "https://cast.faucetdrops.io/default.jpeg",
+    "imageUrl": "https://cast.faucetdrops.io/image.png",
     "buttonTitle": "Check this out",
-    "splashImageUrl": "https://cast.faucetdrops.io/default.jpeg",
+    "splashImageUrl": "https://cast.faucetdrops.io/splash.png",
     "splashBackgroundColor": "#020817f",
     "webhookUrl": "https://cast.faucetdrops.io/api/webhook"
   }

@@ -38,7 +38,7 @@
     "app/api/very/status/route.ts",
     "hooks/use-verification.ts",
     ".next/dev/types/**/*.ts"
-, "app/api/webhook/route.js", "app/api/webhook/route.js"  ],
+, "app/api/webhook/route.ts", "app/api/webhook/route.ts"  ],
   "exclude": [
     "node_modules"
   ]
