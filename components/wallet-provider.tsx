@@ -60,56 +60,31 @@ export function WalletProvider({ children }: { children: ReactNode }) {
        }
     }
   }, []);
-  
+  // SINGLE useEffect for provider/signer setup
   useEffect(() => {
     const updateProviderAndSigner = async () => {
-      // LOGIC BRANCH: Farcaster vs Standard Web
-      
-      // 1. FARCASTER ENVIRONMENT
-      if (isFarcaster) {
+      if (wagmiConnected && address && window.ethereum) {
         try {
-          console.log('[WalletProvider] Detected Farcaster Environment');
-          const farcasterProvider = sdk.wallet.getEthereumProvider();
-          
-          // Wrap the Farcaster provider with Ethers
-          const ethersProvider = new BrowserProvider(farcasterProvider as any);
-          const ethersSigner = await ethersProvider.getSigner();
-
-          setProvider(ethersProvider);
-          setSigner(ethersSigner);
-          setIsReady(true);
-          
-          // In Farcaster, we are "always" connected via their wallet
-          return; 
+          const ethersProvider = new BrowserProvider(window.ethereum)
+          const ethersSigner = await ethersProvider.getSigner()
+          setProvider(ethersProvider)
+          setSigner(ethersSigner)
         } catch (error) {
-          console.error('[WalletProvider] Farcaster connection error', error);
-        }
-      }
-
-      // 2. STANDARD WEB ENVIRONMENT (Your existing logic)
-      if (wagmiConnected && address && typeof window !== 'undefined' && window.ethereum) {
-        try {
-          const ethersProvider = new BrowserProvider(window.ethereum);
-          const ethersSigner = await ethersProvider.getSigner();
-          
-          setProvider(ethersProvider);
-          setSigner(ethersSigner);
-          setIsReady(true);
-        } catch (error) {
-          setProvider(null);
-          setSigner(null);
-          setIsReady(false);
+          console.error('Provider setup failed:', error)
+          setProvider(null)
+          setSigner(null)
         }
       } else {
-        setProvider(null);
-        setSigner(null);
-        setIsReady(false);
+        setProvider(null)
+        setSigner(null)
       }
     }
+    updateProviderAndSigner()
+  }, [wagmiConnected, address, chainId])
 
-    updateProviderAndSigner();
-  }, [wagmiConnected, address, chainId, isFarcaster]);
-
+useEffect(() => {
+  sdk.actions.ready().catch(console.error)
+}, [])
   // OVERRIDE: connect()
   // If in Farcaster, connect is handled automatically, but we can trigger it explicitly if needed
   const connect = async () => {

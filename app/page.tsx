@@ -11,6 +11,7 @@ import { NetworkGrid } from "@/components/network"
 import { useWallet } from "@/hooks/use-wallet"
 import { useToast } from "@/hooks/use-toast"
 import Head from "@/components/Head"
+import sdk from '@farcaster/miniapp-sdk'
 
 // Smart contract details
 const DROPLIST_CONTRACT_ADDRESS = "0xB8De8f37B263324C44FD4874a7FB7A0C59D8C58E"
@@ -127,6 +128,10 @@ const getErrorInfo = (error: unknown): { code?: string | number; message: string
     message: typeof error === "string" ? error : "Unknown error occurred",
   }
 }
+
+useEffect(() => {
+  sdk.actions.ready().catch(console.error)
+}, [])
 
 export default function Home() {
   const router = useRouter()
