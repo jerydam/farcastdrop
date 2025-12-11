@@ -1,4 +1,4 @@
-// File: app/page.tsx (or components/home.tsx - the main Home component)
+// File: app/page.tsx
 "use client"
 
 import { FaucetList } from "@/components/faucet-list"
@@ -11,7 +11,7 @@ import { NetworkGrid } from "@/components/network"
 import { useWallet } from "@/hooks/use-wallet"
 import { useToast } from "@/hooks/use-toast"
 import Head from "@/components/Head"
-
+import { FarcasterActions } from "@/components/farcaster-action" // Make sure you created this file!
 
 // Smart contract details
 const DROPLIST_CONTRACT_ADDRESS = "0xB8De8f37B263324C44FD4874a7FB7A0C59D8C58E"
@@ -131,24 +131,17 @@ const getErrorInfo = (error: unknown): { code?: string | number; message: string
 
 export default function Home() {
   const router = useRouter()
-  const { address, isConnected, signer, chainId, ensureCorrectNetwork } = useWallet()
+  const { address, isConnected, signer, chainId } = useWallet()
   const { toast } = useToast()
   
   // Existing states
-  const [isCheckingIn, setIsCheckingIn] = useState(false)
-  const [checkInStatus, setCheckInStatus] = useState("")
-  const [isAllowedAddress, setIsAllowedAddress] = useState(false)
   const [currentNetwork, setCurrentNetwork] = useState<"celo" | "lisk" | null>(null)
   
   // Loading states
   const [isNavigatingToCreate, setIsNavigatingToCreate] = useState(false)
   const [isNavigatingToVerify, setIsNavigatingToVerify] = useState(false)
-  const [isNetworkSelectorLoading, setIsNetworkSelectorLoading] = useState(false)
-  const [isJoiningDroplist, setIsJoiningDroplist] = useState(false)
-  
   
   // New droplist states
-  const [isDroplistOpen, setIsDroplistOpen] = useState(false)
   const [droplistNotification, setDroplistNotification] = useState<string | null>(null)
 
   // Handle navigation with loading
@@ -177,31 +170,6 @@ export default function Home() {
       setIsNavigatingToVerify(false)
     }
   }
-
-  // Handle droplist modal
-  const handleDroplistClick = () => {
-    setIsDroplistOpen(true)
-    setDroplistNotification(null)
-  }
-
-  const handleDroplistClose = () => {
-    setIsDroplistOpen(false)
-  }
-
-  // Handle network selector loading
-  const handleNetworkSelectorChange = async (network: string) => {
-    setIsNetworkSelectorLoading(true)
-    try {
-      await new Promise(resolve => setTimeout(resolve, 1000)) // Simulate network switch
-      setCurrentNetwork(network as "celo" | "lisk")
-    } catch (error) {
-      console.error('Network switch error:', error)
-    } finally {
-      setIsNetworkSelectorLoading(false)
-    }
-  }
-
-  
 
   // Clean up event listener
   useEffect(() => {
@@ -249,11 +217,6 @@ export default function Home() {
     }
   }, [droplistNotification])
 
-  // Debug button state
-  useEffect(() => {
-    console.log('Button state:', { isConnected, isJoiningDroplist, disabled: !isConnected || isJoiningDroplist || !chainId || !isSupportedNetwork(chainId!), address, chainId })
-  }, [isConnected, isJoiningDroplist, address, chainId])
-
   return (
      <main className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
       <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 lg:py-8">
@@ -261,27 +224,40 @@ export default function Home() {
           {/* Header Section */}
           <Head />
 
-          {/* User Info Card (for mobile) */}
-          {isConnected && address && (
-            <div className="lg:hidden bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-3 sm:p-4">
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Wallet</span>
-                </div>
-                <p className="text-xs text-slate-600 dark:text-slate-300 font-mono break-all">
-                  {address}
-                </p>
-                {currentNetwork && (
+          {/* User Info Card (Mobile & Farcaster Context) */}
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-3 sm:p-4">
+             {isConnected && address ? (
+               <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Network</span>
-                    <span className="text-xs px-2 py-1 bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full capitalize whitespace-nowrap">
-                      {currentNetwork}
-                    </span>
+                    <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Wallet</span>
                   </div>
-                )}
+                  <p className="text-xs text-slate-600 dark:text-slate-300 font-mono break-all">
+                    {address}
+                  </p>
+                  {currentNetwork && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Network</span>
+                      <span className="text-xs px-2 py-1 bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full capitalize whitespace-nowrap">
+                        {currentNetwork}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Mobile/Card Farcaster Action Button */}
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-700">
+                  <FarcasterActions />
+                </div>
               </div>
-            </div>
-          )}
+             ) : (
+              // If not connected, still show the Notification button (user might be in frame but not wallet connected yet)
+              <div className="flex flex-col gap-2">
+                 <p className="text-sm text-slate-500 text-center mb-2">Connect your wallet to manage faucets.</p>
+                 <FarcasterActions />
+              </div>
+             )}
+          </div>
 
           {/* Main Content */}
           <div className="flex flex-col gap-4 sm:gap-6 lg:gap-8">
