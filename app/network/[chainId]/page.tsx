@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useWallet } from "@/components/wallet-provider";
+import { useWallet } from "@/hooks/use-wallet";
 import { useNetwork, Network } from "@/hooks/use-network"; 
 import { useToast } from "@/hooks/use-toast";
 import LoadingPage from "@/components/loading";
@@ -16,7 +16,7 @@ import { formatUnits, Contract, ZeroAddress, JsonRpcProvider } from "ethers";
 import { Coins, Clock, Search, Filter, SortAsc, X, ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ERC20_ABI } from "@/lib/abis";
-import {Header} from "@/components/header";
+import { Header } from "@/components/header";
 import Link from "next/link";
 
 // --- CONFIGURATION PLACEHOLDERS ---

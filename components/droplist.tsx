@@ -1,171 +1,146 @@
-"use client"
+// src/components/join-droplist-button.tsx
+"use client";
 
-import { useState, useEffect } from "react"
-import { Button } from "@/components/ui/button"
-import { Users, Loader2 } from "lucide-react"
-import { useWallet } from "@/components/wallet-provider" // Fixed import path
-import { useToast } from "@/hooks/use-toast"
-import { Contract } from "ethers"
+import { useState } from 'react';
+import { Button } from "@/components/ui/button";
+import { Users, Loader2 } from "lucide-react";
+import { useWallet } from "@/hooks/use-wallet";
+import { useToast } from "@/hooks/use-toast";
+import { appendDivviReferralData, reportTransactionToDivvi } from "../lib/divvi-integration";
+import { Contract } from "ethers";
+import { CHECKIN_ABI } from "@/lib/abis";
+// --- START: Move Contract Details and Helpers from Head ---
 
-// Droplist contract details
-const DROPLIST_CONTRACT_ADDRESS = "0xB8De8f37B263324C44FD4874a7FB7A0C59D8C58E"
-const CELO_CHAIN_ID = 42220
+// Smart contract details
+const DROPLIST_CONTRACT_ADDRESS = "0xB8De8f37B263324C44FD4874a7FB7A0C59D8C58E";
 
-const CHECKIN_ABI = [
-  {
-    "inputs": [],
-    "name": "droplist",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      { "internalType": "address", "name": "user", "type": "address" }
-    ],
-    "name": "hasAddressParticipated",
-    "outputs": [
-      { "internalType": "bool", "name": "", "type": "bool" }
-    ],
-    "stateMutability": "view",
-    "type": "function"
+
+// Helper function to safely extract error information
+const getErrorInfo = (error: unknown): { code?: string | number; message: string } => {
+  if (error && typeof error === "object") {
+    const errorObj = error as any;
+    return {
+      code: errorObj.code,
+      message: errorObj.message || "Unknown error occurred",
+    };
   }
-]
+  return {
+    message: typeof error === "string" ? error : "Unknown error occurred",
+  };
+};
 
-export function JoinDroplistButton() {
-  const { address, isConnected, signer, chainId, ensureCorrectNetwork } = useWallet()
-  const { toast } = useToast()
-  const [isJoining, setIsJoining] = useState(false)
-  const [hasJoined, setHasJoined] = useState(false)
+// --- END: Contract Details and Helpers ---
 
-  // Check if user has already joined
-  const checkParticipation = async () => {
-    if (!address || !signer || chainId !== CELO_CHAIN_ID) return
+export function JoinDroplistButton({
+  className,
+  size = "sm",
+  showLabel = true,
+}: {
+  className?: string;
+  size?: "default" | "sm" | "lg" | "icon";
+  showLabel?: boolean;
+}) {
+  const { address, isConnected, signer, chainId, ensureCorrectNetwork } = useWallet();
+  const { toast } = useToast();
+  const [isJoiningDroplist, setIsJoiningDroplist] = useState(false);
+  const [isDivviSubmitted, setIsDivviSubmitted] = useState(false); // Retained if needed for UI/logic
+  const [droplistNotification, setDroplistNotification] = useState<string | null>(null); // Retained if needed for UI/logic
 
-    try {
-      const contract = new Contract(DROPLIST_CONTRACT_ADDRESS, CHECKIN_ABI, signer)
-      const participated = await contract.hasAddressParticipated(address)
-      setHasJoined(participated)
-    } catch (error) {
-      console.warn("Could not check participation status:", error)
-    }
-  }
-
-  // Check participation status when wallet connects
-  useEffect(() => {
-    if (isConnected && address && chainId === CELO_CHAIN_ID) {
-      checkParticipation()
-    }
-  }, [isConnected, address, chainId])
-
+  // Handle joining droplist (Logic moved from Head)
   const handleJoinDroplist = async () => {
     if (!isConnected || !address || !signer) {
+      setDroplistNotification("Please connect your wallet first");
       toast({
-        title: "Wallet Not Connected",
-        description: "Your Farcaster wallet will connect automatically",
-        variant: "default",
-      })
-      return
-    }
-
-    // Ensure we're on Celo
-    const isCorrectNetwork = await ensureCorrectNetwork(CELO_CHAIN_ID)
-    if (!isCorrectNetwork) {
-      toast({
-        title: "Wrong Network",
-        description: "Please switch to Celo network",
+        title: "Wallet not connected",
+        description: "Please connect your wallet to join the droplist",
         variant: "destructive",
-      })
-      return
+      });
+      return;
     }
 
-    setIsJoining(true)
+    // Ensure correct network (Celo, chain ID 42220)
+    const isCorrectNetwork = await ensureCorrectNetwork(42220);
+    if (!isCorrectNetwork) {
+      setDroplistNotification("Please switch to the Celo network to join the droplist");
+      toast({
+        title: "Incorrect network",
+        description: "Please switch to the Celo network (chain ID 42220)",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsJoiningDroplist(true);
+    setDroplistNotification(null);
 
     try {
-      const contract = new Contract(DROPLIST_CONTRACT_ADDRESS, CHECKIN_ABI, signer)
+      const contract = new Contract(DROPLIST_CONTRACT_ADDRESS, CHECKIN_ABI, signer);
 
       // Estimate gas
-      const gasLimit = await contract.droplist.estimateGas()
-      const gasLimitWithBuffer = (gasLimit * BigInt(120)) / BigInt(100)
+      let gasLimit: bigint;
+      try {
+        gasLimit = await contract.droplist.estimateGas();
+      } catch (error) {
+        console.error('Gas estimation error:', getErrorInfo(error));
+        throw new Error('Failed to estimate gas for droplist transaction');
+      }
+
+      // Add 20% buffer using BigInt operations
+      const gasLimitWithBuffer = (gasLimit * BigInt(120)) / BigInt(100);
+
+      // Prepare transaction data
+      const txData = contract.interface.encodeFunctionData("droplist", []);
+      const enhancedData = appendDivviReferralData(txData, address as `0x${string}`);
 
       // Send transaction
-      const tx = await contract.droplist({
+      const tx = await signer.sendTransaction({
+        to: DROPLIST_CONTRACT_ADDRESS,
+        data: enhancedData,
         gasLimit: gasLimitWithBuffer,
-      })
+      });
 
-      console.log("Droplist transaction sent:", tx.hash)
+      console.log('Transaction sent:', tx.hash);
 
-      // Wait for confirmation
-      const receipt = await tx.wait()
+      // Wait for transaction confirmation
+      const receipt = await tx.wait();
       
-      if (receipt && receipt.status === 1) {
-        setHasJoined(true)
-        toast({
-          title: "Success! 🎉",
-          description: "You've successfully joined the droplist!",
-        })
-      } else {
-        throw new Error("Transaction failed")
-      }
+      // Report to Divvi
+      await reportTransactionToDivvi(tx.hash as `0x${string}`, chainId!);
 
-    } catch (error: any) {
-      console.error("Droplist join error:", error)
-      
-      let errorMessage = "Failed to join droplist"
-      
-      if (error.message?.includes("user rejected")) {
-        errorMessage = "Transaction was rejected"
-      } else if (error.message?.includes("insufficient funds")) {
-        errorMessage = "Insufficient funds for gas fees"
-      }
-      
+      setDroplistNotification("Successfully joined the droplist!");
+      setIsDivviSubmitted(true);
+      toast({
+        title: "Success",
+        description: "You have successfully joined the droplist!",
+      });
+
+    } catch (error) {
+      console.error('Droplist join error:', getErrorInfo(error));
+      const errorInfo = getErrorInfo(error);
+      setDroplistNotification(`Failed to join droplist: ${errorInfo.message}`);
       toast({
         title: "Error",
-        description: errorMessage,
+        description: `Failed to join droplist: ${errorInfo.message}`,
         variant: "destructive",
-      })
+      });
     } finally {
-      setIsJoining(false)
+      setIsJoiningDroplist(false);
     }
-  }
-
-  // Don't show button if not connected or already joined
-  if (!isConnected) {
-    return null
-  }
-
-  if (hasJoined) {
-    return (
-      <Button
-        size="sm"
-        disabled
-        variant="outline"
-        className="flex items-center gap-2 bg-green-50 border-green-300 text-green-700 dark:bg-green-900/20 dark:border-green-700 dark:text-green-300"
-      >
-        <Users className="h-4 w-4" />
-        <span>Joined ✓</span>
-      </Button>
-    )
-  }
+  };
 
   return (
     <Button
       onClick={handleJoinDroplist}
-      disabled={isJoining}
-      size="sm"
-      className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white"
+      disabled={!isConnected || isJoiningDroplist}
+      size={size}
+      className={`flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 ${className}`}
     >
-      {isJoining ? (
-        <>
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <span>Joining...</span>
-        </>
+      {isJoiningDroplist ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
       ) : (
-        <>
-          <Users className="h-4 w-4" />
-          <span>Join Droplist</span>
-        </>
+        <Users className="h-4 w-4" />
       )}
+      {showLabel && <span>{isJoiningDroplist ? "Droplisting..." : "Join Droplist"}</span>}
     </Button>
-  )
+  );
 }

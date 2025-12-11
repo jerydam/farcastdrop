@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useWallet } from "@/components/wallet-provider"
+import { useWallet } from "@/hooks/use-wallet"
 import { useNetwork } from "@/hooks/use-network"
 import { isCeloNetwork } from "@/lib/divvi-integration"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"

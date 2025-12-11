@@ -1,8 +1,9 @@
 "use client"
 
+import { useAppKit } from '@reown/appkit/react'
 import { Button } from "@/components/ui/button"
-import { Wallet, ChevronDown, LayoutDashboard, Copy, LogOut } from "lucide-react"
-import { useWallet } from "./wallet-provider"
+import { Wallet, ChevronDown, LayoutDashboard, Copy, ExternalLink, LogOut, User2 } from "lucide-react"
+import { useWallet } from "./wallet-provider" // Use your custom hook
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,7 +17,8 @@ import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
 
 export function WalletConnectButton({ className }: { className?: string }) {
-  const { address, isConnected, chainId } = useWallet()
+  const { open } = useAppKit()
+  const { address, isConnected, isFarcaster } = useWallet() // Use unified context
   const { toast } = useToast()
   
   const formatAddress = (addr: string) => `${addr.slice(0, 6)}...${addr.slice(-4)}`
@@ -28,66 +30,57 @@ export function WalletConnectButton({ className }: { className?: string }) {
     }
   }
 
-  const getChainName = (id: number | null) => {
-    if (id === 42220) return "Celo"
-    return `Chain ${id}`
+  // 1. FARCASTER STATE
+  // If we are in a Farcaster frame, we don't need a "Connect" button, 
+  // we just show the connected state (simplified).
+  if (isFarcaster && isConnected && address) {
+     return (
+        <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-full border border-border/50">
+           <div className="h-2 w-2 rounded-full bg-purple-500 animate-pulse" />
+           <span className="font-mono text-xs text-muted-foreground">FC: {formatAddress(address)}</span>
+        </div>
+     )
   }
 
+  // 2. DISCONNECTED
   if (!isConnected || !address) {
-  return (
-    <Button size="sm" disabled className="flex items-center gap-2">
-      <Wallet className="h-4 w-4" />
-      Connecting...
-    </Button>
-  )
-}
+    return (
+      <Button onClick={() => open()} size="sm" className="flex items-center gap-2 font-semibold">
+        <Wallet className="h-4 w-4" />
+        Connect Wallet
+      </Button>
+    )
+  }
 
-  // Connected
+  // 3. STANDARD CONNECTED
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button 
-          variant="outline" 
-          size="sm" 
-          className="flex items-center gap-2 border-primary/20"
-        >
-          <div className="h-2 w-2 rounded-full bg-purple-500 animate-pulse" />
-          <span className="font-mono text-xs sm:text-sm">
-            {formatAddress(address)}
-          </span>
+        <Button variant="outline" size="sm" className="flex items-center gap-2 border-primary/20">
+          <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+          <span className="font-mono text-xs sm:text-sm">{formatAddress(address)}</span>
           <ChevronDown className="h-3 w-3 opacity-50" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel className="text-xs text-muted-foreground">
-          Farcaster Wallet
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs text-muted-foreground">My Account</DropdownMenuLabel>
         <DropdownMenuGroup>
-          <DropdownMenuItem disabled className="text-xs">
-            Network: {getChainName(chainId)}
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
           <DropdownMenuItem asChild>
-            <Link 
-              href="/faucet/dashboard" 
-              className="cursor-pointer flex items-center gap-2"
-            >
-              <LayoutDashboard className="h-4 w-4" />
-              <span>Dashboard</span>
-            </Link>
+             <Link href="/faucet/dashboard" className="cursor-pointer flex items-center gap-2">
+               <LayoutDashboard className="h-4 w-4" />
+               <span>Dashboard</span>
+             </Link>
           </DropdownMenuItem>
-          <DropdownMenuItem 
-            onClick={handleCopyAddress} 
-            className="cursor-pointer flex items-center gap-2"
-          >
-            <Copy className="h-4 w-4" />
-            <span>Copy Address</span>
+          <DropdownMenuItem onClick={handleCopyAddress} className="cursor-pointer flex items-center gap-2">
+             <Copy className="h-4 w-4" />
+             <span>Copy Address</span>
           </DropdownMenuItem>
+          {/* ... other items ... */}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-          {address}
+        <DropdownMenuItem onClick={() => open()} className="cursor-pointer flex items-center gap-2">
+             <ExternalLink className="h-4 w-4" />
+             <span>Wallet Settings</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

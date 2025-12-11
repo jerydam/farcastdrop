@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useWallet } from "@/components/wallet-provider"
+import { useWallet } from "@/hooks/use-wallet"
 import { Card, CardContent } from "@/components/ui/card"
 import { formatUnits, Contract, ZeroAddress, JsonRpcProvider } from "ethers"
 import { ERC20_ABI } from "@/lib/abis"

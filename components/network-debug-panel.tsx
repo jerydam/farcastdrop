@@ -1,7 +1,7 @@
 "use client"
 
 import { useNetwork } from "@/hooks/use-network"
-import { useWallet } from "@/components/wallet-provider"
+import { useWallet } from "@/hooks/use-wallet"
 import { useEffect, useState } from "react"
 
 export function NetworkDebugPanel() {

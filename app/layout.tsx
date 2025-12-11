@@ -8,18 +8,18 @@ const inter = Inter({ subsets: ["latin"] })
 
 // Define the MiniApp metadata for the head tag
 // This tells Farcaster clients how to launch your frame
-const appUrl = process.env.NEXT_PUBLIC_URL || "https://farcastdrop.vercel.app";
+const appUrl = process.env.NEXT_PUBLIC_URL || "https://app.faucetdrops.io";
 
 const frameMetadata = JSON.stringify({
   version: "next",
-  imageUrl: `${appUrl}/default.jpeg`, // Make sure this image exists
+  imageUrl: `${appUrl}/opengraph-image.png`, // Make sure this image exists
   button: {
     title: "Drip Tokens 💧",
     action: {
       type: "launch_frame",
       name: "FaucetDrops",
       url: appUrl,
-      splashImageUrl: `${appUrl}/logo.png`,
+      splashImageUrl: `${appUrl}/splash.png`,
       splashBackgroundColor: "#020817",
     },
   },
@@ -35,6 +35,7 @@ export const metadata: Metadata = {
     "fc:frame": frameMetadata,
   },
 };
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -43,7 +44,6 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        {/* 3. Use the dynamic component */}
         <Providers>
           <div className="min-h-screen flex flex-col">
             <main className="flex-1">

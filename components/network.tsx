@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 // Assuming useWallet and useNetwork are imported correctly
-import { useWallet } from "@/components/wallet-provider"; 
+import { useWallet } from "@/hooks/use-wallet"; 
 import { useNetwork } from "@/hooks/use-network"; 
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
