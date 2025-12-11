@@ -8,7 +8,7 @@ import {  WalletConnectButton } from "@/components/wallet-connect"
 import { useWallet } from "@/hooks/use-wallet"
 import { useToast } from "@/hooks/use-toast"
 import { appendDivviReferralData, reportTransactionToDivvi } from "../lib/divvi-integration"
-import { Contract } from "ethers"
+import { Contract, formatEther } from "ethers"
 import Link from 'next/link'
 
 // Smart contract details
@@ -120,10 +120,11 @@ const getErrorInfo = (error: unknown): { code?: string | number; message: string
     // Handle Ethers/Metamask error structure
     if (errorObj.reason) return { message: errorObj.reason }
     if (errorObj.data && errorObj.data.message) return { message: errorObj.data.message }
+    if (errorObj.message) return { message: errorObj.message }
     
     return {
       code: errorObj.code,
-      message: errorObj.message || "Unknown error occurred",
+      message: "Unknown error occurred",
     }
   }
   return {
@@ -142,12 +143,8 @@ export default function Head() {
   const [isJoiningDroplist, setIsJoiningDroplist] = useState(false)
   
   // New droplist states
-  const [isDroplistOpen, setIsDroplistOpen] = useState(false)
   const [droplistNotification, setDroplistNotification] = useState<string | null>(null)
   
-  // Existing states
-  const [isDivviSubmitted, setIsDivviSubmitted] = useState(false)
-
   const [isMounted, setIsMounted] = useState(false)
 
   useEffect(() => {
@@ -157,13 +154,7 @@ export default function Head() {
 
   // Close mobile menu when route changes
   useEffect(() => {
-    const handleRouteChange = () => {
-      setIsMenuOpen(false)
-    }
-    // router.events?.on('routeChangeStart', handleRouteChange)
-    // return () => {
-    //   router.events?.off('routeChangeStart', handleRouteChange)
-    // }
+    setIsMenuOpen(false)
   }, [])
 
   // Handle joining droplist
@@ -197,43 +188,52 @@ export default function Head() {
 
     try {
       const contract = new Contract(DROPLIST_CONTRACT_ADDRESS, CHECKIN_ABI, signer)
+      
+      // 1. CHECK CONTRACT FUNDS (Common cause of "Missing Revert Data")
+      if (signer.provider) {
+        const contractBalance = await signer.provider.getBalance(DROPLIST_CONTRACT_ADDRESS)
+        console.log("Contract Balance:", formatEther(contractBalance))
+        
+        // If balance is very low (e.g. less than 0.001 Celo), the tx will likely fail
+        if (contractBalance < BigInt(1000000000000000)) { // 0.001 ETH/CELO
+           console.warn("Contract balance is extremely low.")
+           // We don't block here, but we log it. The estimateGas below will likely fail if it's 0.
+        }
+      }
 
-      // 1. Pre-check: Has user already participated?
-      // This prevents the gas estimation error if the contract reverts on double-entry
+      // 2. CHECK PARTICIPATION
       try {
         const hasJoined = await contract.hasAddressParticipated(address)
         if (hasJoined) {
           throw new Error("You have already joined this droplist!")
         }
       } catch (checkError: any) {
-        // If the check itself fails (network error, etc), throw it. 
-        // If it's our manual error, it will be caught by the outer catch
         if (checkError.message === "You have already joined this droplist!") {
             throw checkError
         }
-        console.warn("Could not verify participation status, proceeding cautiously:", checkError)
+        console.warn("Verification warning:", checkError)
       }
 
-      // 2. Simulation: Use staticCall to check for other revert reasons
-      // This gives us a readable error message instead of "Gas estimation failed"
-      try {
-        await contract.droplist.staticCall() 
-      } catch (simError: any) {
-        console.error("Simulation failed:", simError)
-        const simInfo = getErrorInfo(simError)
-        throw new Error(simInfo.message || "Transaction simulation failed")
-      }
-
-      // 3. Estimate Gas
+      // 3. ESTIMATE GAS
       let gasLimit: bigint
       try {
+        // We do NOT use staticCall here as it can mask the real error with "missing revert data"
         gasLimit = await contract.droplist.estimateGas()
-      } catch (error) {
-        console.error('Gas estimation error:', getErrorInfo(error))
-        throw new Error('Gas estimation failed. The transaction would likely fail.')
+      } catch (error: any) {
+        console.error('Gas estimation error:', error)
+        
+        const errInfo = getErrorInfo(error)
+        
+        // If we get "missing revert data", it implies the contract execution failed silently.
+        // This is almost always because the contract is empty or logic failed.
+        if (errInfo.message.includes("missing revert data") || errInfo.message.includes("execution reverted")) {
+             throw new Error("Transaction failed simulation. The Faucet might be empty or paused.")
+        }
+        
+        throw new Error(`Gas estimation failed: ${errInfo.message}`)
       }
 
-      // Add 20% buffer using BigInt operations
+      // Add 20% buffer
       const gasLimitWithBuffer = (gasLimit * BigInt(120)) / BigInt(100)
 
       // Prepare transaction data
@@ -249,30 +249,31 @@ export default function Head() {
 
       console.log('Transaction sent:', tx.hash)
 
-      // Wait for transaction confirmation
+      // Wait for confirmation
       const receipt = await tx.wait()
       
       // Report to Divvi
       await reportTransactionToDivvi(tx.hash as `0x${string}`, chainId!)
 
       setDroplistNotification("Successfully joined the droplist!")
-      setIsDivviSubmitted(true)
       toast({
         title: "Success",
         description: "You have successfully joined the droplist!",
       })
 
-    } catch (error) {
-      console.error('Droplist join error:', getErrorInfo(error))
+    } catch (error: any) {
+      console.error('Droplist join error:', error)
       const errorInfo = getErrorInfo(error)
       
-      // Friendly error message for users
       let displayMessage = errorInfo.message
+      
       if (displayMessage.toLowerCase().includes("already joined")) {
         displayMessage = "You have already joined this droplist."
+      } else if (displayMessage.toLowerCase().includes("user rejected")) {
+        displayMessage = "Transaction rejected by wallet."
       }
 
-      setDroplistNotification(`Failed to join: ${displayMessage}`)
+      setDroplistNotification(`Failed: ${displayMessage}`)
       toast({
         title: "Error",
         description: displayMessage,
