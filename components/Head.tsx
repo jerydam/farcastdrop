@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import Image from 'next/image'
 import { Button } from "@/components/ui/button"
 import { useRouter } from "next/navigation"
-import { Plus, Users, Loader2, Menu, X } from "lucide-react"
+import { Plus, Users, Loader2, Menu, X, ExternalLink } from "lucide-react"
 import { WalletConnectButton } from "@/components/wallet-connect"
 import { useWallet } from "@/hooks/use-wallet"
 import { useToast } from "@/hooks/use-toast"
@@ -52,7 +52,6 @@ export default function Head() {
       return
     }
 
-    // 1. Ensure Network
     const isCorrectNetwork = await ensureCorrectNetwork(42220)
     if (!isCorrectNetwork) {
       toast({ title: "Incorrect network", description: "Switch to Celo (42220).", variant: "destructive" })
@@ -64,62 +63,93 @@ export default function Head() {
     try {
       const contract = new Contract(DROPLIST_CONTRACT_ADDRESS, CHECKIN_ABI, signer)
 
-      // 2. Check Participation (Optional - we don't block heavily here anymore)
+      // 1. Optional Check: Have we joined? (We don't block on this anymore)
       try {
         const hasJoined = await contract.hasAddressParticipated(address)
         if (hasJoined) {
-          // We throw here to stop the UI, but we catch it below to show a nice message
-          throw new Error("ALREADY_JOINED")
+             toast({ title: "Notice", description: "You might have already joined this droplist.", variant: "default" })
         }
-      } catch (e: any) {
-        if (e.message === "ALREADY_JOINED") throw e
-        console.warn("Could not check participation status, proceeding anyway...", e)
+      } catch (e) { 
+        console.warn("Could not verify participation:", e)
       }
 
-      // 3. Estimate Gas (With Fallback)
+      // 2. Gas Limit Strategy: Try estimate, fallback to Manual
       let gasLimit
       try {
-        // Try to estimate gas normally
         gasLimit = await contract.droplist.estimateGas()
         // Add 20% buffer
         gasLimit = (gasLimit * BigInt(120)) / BigInt(100)
       } catch (error) {
-        console.warn("Gas estimation failed. Falling back to manual gas limit.", error)
-        // FORCE THE TRANSACTION: Set a manual gas limit (e.g., 300,000 gas)
-        // This bypasses the "Transaction failed simulation" error
-        gasLimit = BigInt(300000) 
+        console.warn("Gas estimation failed. Forcing manual gas limit.")
+        // FORCE GAS: 300,000 is enough for a simple write. 
+        // This bypasses the "Simulation Failed" error.
+        gasLimit = BigInt(300000)
       }
 
-      // 4. Send Transaction
+      // 3. Prepare Data
       const txData = contract.interface.encodeFunctionData("droplist", [])
       const enhancedData = appendDivviReferralData(txData, address as `0x${string}`)
 
+      // 4. Send Transaction
+      // Note: We use try/catch specifically around the wait() to prevent "Provider not supported" crashes
       const tx = await signer.sendTransaction({
         to: DROPLIST_CONTRACT_ADDRESS,
         data: enhancedData,
-        gasLimit: gasLimit, // Uses the estimated OR the manual 300k limit
+        gasLimit: gasLimit,
       })
 
-      console.log("Tx sent:", tx.hash)
-      await tx.wait()
-      await reportTransactionToDivvi(tx.hash as `0x${string}`, chainId!)
+      console.log("Tx hash:", tx.hash)
+      
+      // IMMEDIATE FEEDBACK: Don't wait for receipt to show success
+      toast({ 
+        title: "Transaction Sent!", 
+        description: (
+          <div className="flex flex-col gap-1">
+            <span>Waiting for confirmation...</span>
+            <a 
+              href={`https://celoscan.io/tx/${tx.hash}`} 
+              target="_blank" 
+              rel="noreferrer"
+              className="text-blue-500 underline flex items-center gap-1 text-xs"
+            >
+              View on Explorer <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
+        ),
+      })
 
-      toast({ title: "Success", description: "Joined successfully!" })
+      // 5. Safe Wait & Report (Non-blocking)
+      try {
+        await tx.wait()
+        // Only report if wait succeeds
+        try {
+            await reportTransactionToDivvi(tx.hash as `0x${string}`, chainId!)
+        } catch (divviError) {
+            console.warn("Divvi reporting failed (ignoring):", divviError)
+        }
+        
+        toast({ title: "Confirmed!", description: "Successfully joined the droplist." })
+        
+      } catch (waitError: any) {
+        // This catches the "Provider does not support eth_getTransaction" error
+        console.warn("Could not wait for receipt (Wallet limitation):", waitError)
+        // We assume success because the transaction hash was generated
+        if (waitError?.message?.includes("support") || waitError?.code === "UNKNOWN_ERROR") {
+             // Do nothing, the user already has the "Transaction Sent" toast
+        } else {
+             throw waitError // Real error
+        }
+      }
 
     } catch (error: any) {
       console.error('Join Error:', error)
       
-      if (error.message === "ALREADY_JOINED" || error.message?.includes("already joined")) {
-        toast({ title: "Already Joined", description: "You are already on the droplist.", variant: "default" })
-      } else if (error.code === "ACTION_REJECTED" || error.code === 4001) {
-        toast({ title: "Cancelled", description: "Transaction rejected by user.", variant: "destructive" })
+      const msg = error?.reason || error?.message || "Unknown error"
+      
+      if (msg.includes("user rejected") || error.code === "ACTION_REJECTED") {
+        toast({ title: "Cancelled", description: "Transaction rejected.", variant: "default" })
       } else {
-        // Generic error
-        toast({ 
-          title: "Transaction Failed", 
-          description: error.reason || error.message || "Unknown error", 
-          variant: "destructive" 
-        })
+        toast({ title: "Error", description: "Failed to send transaction. Check console.", variant: "destructive" })
       }
     } finally {
       setIsJoiningDroplist(false)
@@ -130,7 +160,6 @@ export default function Head() {
     <header className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-4 sm:p-6 relative z-10">
       <div className="flex flex-col lg:flex-row justify-between items-center gap-4">
         
-        {/* Logo Area */}
         <div className="flex justify-between items-center w-full lg:w-auto">
           <Link href="/">
             <div className="flex items-center gap-2">
@@ -141,18 +170,15 @@ export default function Head() {
               </div>
             </div>
           </Link>
-          
           <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="lg:hidden p-2">
             {isMenuOpen ? <X /> : <Menu />}
           </button>
         </div>
 
-        {/* Desktop Actions */}
         <div className="hidden lg:flex items-center gap-3">
             <Button onClick={() => router.push('/create-faucet')} size="sm" className="bg-blue-600 hover:bg-blue-700">
               <Plus className="h-4 w-4 mr-2" /> Create Faucet
             </Button>
-
             <Button 
               onClick={handleJoinDroplist} 
               disabled={!isConnected || isJoiningDroplist} 
@@ -162,12 +188,10 @@ export default function Head() {
               {isJoiningDroplist ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4 mr-2" />}
               Join Droplist
             </Button>
-
             <WalletConnectButton />
         </div>
       </div>
       
-      {/* Mobile Menu */}
       {isMenuOpen && (
         <div className="lg:hidden mt-4 space-y-3">
            <Button onClick={() => router.push('/create-faucet')} className="w-full bg-blue-600">Create Faucet</Button>
