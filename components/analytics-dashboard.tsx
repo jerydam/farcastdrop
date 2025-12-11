@@ -215,7 +215,7 @@ function StatCard({
   }
 
   return (
-    <div className="bg-[#020817] rounded-xl border border-slate-900 p-4 hover:bg-slate-800/70 transition-all">
+    <div className="bg-[#020817] rounded-xl border border-slate-900 p-4 hover:bg-slate-800/70 transition-all ">
       <div className="flex items-center justify-between mb-3">
         <p className="text-sm text-slate-400 font-medium">
           {title}
@@ -258,7 +258,7 @@ function DashboardContent({ data: propData, loading: propLoading, error: propErr
   const finalError = propError ?? error
 
   return (
-    <div className="w-full min-h-screen bg-[#020817] p-4 md:p-6 lg:p-8">
+    <div className="w-full min-h-screen bg-gray-50 dark:bg-gray-900 border-dashed border-2 border-gray-300 dark:border-gray-700 p-4 md:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto space-y-6">
         <div className="text-center md:text-left">
           <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold tracking-tight text-white">
@@ -314,7 +314,7 @@ function DashboardContent({ data: propData, loading: propLoading, error: propErr
         </div>
 
         <Tabs defaultValue="faucets" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 h-auto bg-slate-800/50 border border-[#020817]/50 rounded-xl p-1">
+          <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 h-auto bg-gray-50 dark:bg-gray-900 border-dashed border-2 border-gray-300 dark:border-gray-700 rounded-xl p-1">
             <TabsTrigger 
               value="faucets" 
               className="text-xs md:text-sm px-2 py-2 md:px-4 rounded-lg data-[state=active]:bg-[#020817] data-[state=active]:text-white"
