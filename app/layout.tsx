@@ -10,12 +10,12 @@ const appUrl = process.env.NEXT_PUBLIC_URL || "https://cast.faucetdrops.io";
 
 // Define the Farcaster Frame Metadata
 const frameMetadata = JSON.stringify({
-  version: "next",
+  version: "1",
   imageUrl: `${appUrl}/default.jpeg`, 
   button: {
     title: "Drip Tokens 💧",
     action: {
-      type: "launch_frame",
+      type: "launch_miniapp", // Changed from launch_frame
       name: "FaucetDrops",
       url: appUrl,
       splashImageUrl: `${appUrl}/favicon.png`,
@@ -32,6 +32,7 @@ export const metadata: Metadata = {
   },
   other: {
     "fc:frame": frameMetadata,
+    "fc:miniapp": frameMetadata,
   },
 };
 

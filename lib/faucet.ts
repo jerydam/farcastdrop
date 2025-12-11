@@ -2109,34 +2109,196 @@ export async function createFaucet(
   isCustom: boolean = false,
 ): Promise<string> {
   try {
-    const factoryType = determineFactoryType(useBackend, isCustom)
-    const config = getFactoryConfig(factoryType)
+    console.log("🚀 Starting faucet creation...", {
+      factoryAddress,
+      name,
+      tokenAddress,
+      chainId: chainId.toString(),
+      useBackend,
+      isCustom
+    });
+
+    const factoryType = determineFactoryType(useBackend, isCustom);
+    const config = getFactoryConfig(factoryType);
+    
+    console.log("📋 Factory config:", {
+      factoryType,
+      createFunction: config.createFunction
+    });
+
     const signer = await provider.getSigner();
     const signerAddress = await signer.getAddress();
-    const data = new Contract(factoryAddress, config.abi, signer).interface.encodeFunctionData(config.createFunction, [name, tokenAddress, VALID_BACKEND_ADDRESS]);
+    
+    const factory = new Contract(factoryAddress, config.abi, signer);
+    const data = factory.interface.encodeFunctionData(
+      config.createFunction, 
+      [name, tokenAddress, VALID_BACKEND_ADDRESS]
+    );
     const dataWithReferral = appendDivviReferralData(data);
 
-    const gasLimit = await estimateGasWithFallback(provider, {
-      to: factoryAddress, data: dataWithReferral, from: signerAddress, value: BigInt(0)
-    }, BigInt(1500000));
+    const gasLimit = await estimateGasWithFallback(
+      provider,
+      {
+        to: factoryAddress,
+        data: dataWithReferral,
+        from: signerAddress,
+        value: BigInt(0)
+      },
+      BigInt(1500000)
+    );
 
-    const tx = await signer.sendTransaction({ to: factoryAddress, data: dataWithReferral, gasLimit });
+    console.log("⛽ Gas limit estimated:", gasLimit.toString());
+
+    const tx = await signer.sendTransaction({
+      to: factoryAddress,
+      data: dataWithReferral,
+      gasLimit
+    });
     
-    // 💡 UPDATED: Safe wait
+    console.log("📤 Transaction sent:", tx.hash);
+    console.log("⏳ Waiting for transaction confirmation...");
+
+    // Wait for transaction receipt
     const receipt = await safeWaitForReceipt(tx, provider);
-    if (!receipt) throw new Error("Transaction receipt is null");
     
-    await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId));
+    if (!receipt) {
+      throw new Error("Transaction receipt is null - transaction may have failed");
+    }
 
+    if (receipt.status === 0) {
+      throw new Error("Transaction failed - please check the transaction on the block explorer");
+    }
+
+    console.log("✅ Transaction confirmed in block:", receipt.blockNumber);
+    console.log("📊 Transaction status:", receipt.status);
+    console.log("📝 Number of logs:", receipt.logs?.length || 0);
+
+    // Report to Divvi (don't let this fail the whole transaction)
+    try {
+      await reportTransactionToDivvi(tx.hash as `0x${string}`, Number(chainId));
+    } catch (divviError) {
+      console.warn("⚠️ Failed to report to Divvi, but faucet was created:", divviError);
+    }
+
+    // Parse logs to find FaucetCreated event
     const factoryInterface = new Interface(config.abi);
-    const event = receipt?.logs?.map((log: any) => {
-        try { return factoryInterface.parseLog({ data: log.data, topics: log.topics as string[] }); } catch { return null; }
-      }).find((parsed: any) => parsed?.name === "FaucetCreated");
+    
+    console.log("🔍 Searching for FaucetCreated event in", receipt.logs?.length, "logs...");
+    
+    let faucetAddress: string | null = null;
+    
+    if (!receipt.logs || receipt.logs.length === 0) {
+      console.error("❌ No logs found in transaction receipt");
+      throw new Error("No events emitted from transaction - faucet may not have been created");
+    }
 
-    if (!event || !event.args?.faucet) throw new Error("Failed to retrieve address");
-    return event.args.faucet as string;
+    for (let i = 0; i < receipt.logs.length; i++) {
+      const log = receipt.logs[i];
+      try {
+        const parsed = factoryInterface.parseLog({
+          data: log.data,
+          topics: log.topics as string[]
+        });
+        
+        console.log(`📋 Log #${i} - Event:`, parsed?.name);
+        
+        if (parsed?.name === "FaucetCreated") {
+          console.log("🎯 Found FaucetCreated event! Args:", parsed.args);
+          
+          // Try different possible argument names
+          // Different factory contracts might use different names
+          faucetAddress = 
+            parsed.args?.faucet ||           // Most common name
+            parsed.args?.faucetAddress ||    // Alternative name
+            parsed.args?.newFaucet ||        // Another alternative
+            parsed.args?.newFaucetAddress || // Yet another alternative
+            parsed.args?.[0];                // Fallback to first argument
+          
+          console.log("📍 Extracted address from event:", faucetAddress);
+          
+          if (faucetAddress && isAddress(faucetAddress)) {
+            console.log("✅ Valid faucet address found:", faucetAddress);
+            break;
+          } else {
+            console.warn("⚠️ FaucetCreated event found but address is invalid:", faucetAddress);
+          }
+        }
+      } catch (parseError) {
+        // This log doesn't match our ABI, skip it
+        console.log(`⏭️ Log #${i} - Skipped (not from our factory)`);
+        continue;
+      }
+    }
+
+    // Final validation
+    if (!faucetAddress) {
+      console.error("❌ Failed to extract faucet address from any event");
+      console.error("📋 All receipt logs:", JSON.stringify(receipt.logs, null, 2));
+      throw new Error(
+        "Failed to retrieve faucet address from transaction events. " +
+        "The transaction succeeded but the address could not be found. " +
+        "Please check transaction " + tx.hash + " on the block explorer."
+      );
+    }
+
+    if (!isAddress(faucetAddress)) {
+      console.error("❌ Extracted value is not a valid address:", faucetAddress);
+      throw new Error(
+        "Invalid faucet address retrieved: " + faucetAddress + ". " +
+        "Please check transaction " + tx.hash + " on the block explorer."
+      );
+    }
+
+    console.log("🎉 Faucet created successfully at:", faucetAddress);
+    console.log("📍 Transaction hash:", tx.hash);
+    console.log("🔗 Block number:", receipt.blockNumber);
+    
+    return faucetAddress;
+
   } catch (error: any) {
-    throw new Error(error.reason || error.message || "Failed to create faucet");
+    console.error("❌ Error in createFaucet:", error);
+    console.error("❌ Error details:", {
+      message: error.message,
+      code: error.code,
+      reason: error.reason,
+      stack: error.stack?.split('\n').slice(0, 5).join('\n') // First 5 lines of stack
+    });
+    
+    // Provide more specific error messages based on error type
+    if (error.code === "ACTION_REJECTED" || error.code === 4001) {
+      throw new Error("Transaction was rejected by user");
+    }
+    
+    if (error.code === "INSUFFICIENT_FUNDS" || error.message?.includes("insufficient funds")) {
+      throw new Error("Insufficient funds to create faucet. Please add more funds to your wallet.");
+    }
+    
+    if (error.message?.includes("Transaction receipt is null")) {
+      throw new Error("Transaction confirmation failed. Please try again or check your wallet.");
+    }
+    
+    if (error.message?.includes("Transaction failed")) {
+      throw new Error("Transaction reverted. This could be due to invalid parameters or insufficient gas.");
+    }
+    
+    if (error.message?.includes("Failed to retrieve faucet address")) {
+      // The transaction succeeded but we couldn't get the address
+      throw new Error(
+        "Faucet creation transaction succeeded but address retrieval failed. " +
+        "Your faucet may have been created. Please check your recent transactions."
+      );
+    }
+    
+    if (error.message?.includes("No events emitted")) {
+      throw new Error(
+        "Transaction succeeded but no creation event was found. " +
+        "Please verify the transaction on the block explorer."
+      );
+    }
+
+    // Generic error with the original message
+    const errorMessage = error.reason || error.message || "Failed to create faucet";
+    throw new Error(errorMessage);
   }
 }
 export async function fundFaucet(
