@@ -1,0 +1,18 @@
+{
+  "accountAssociation": {
+    "header": "eyJmaWQiOjgxMjkzMCwidHlwZSI6ImN1c3RvZHkiLCJrZXkiOiIweDk4OTVFMzg1OTEzODlmZmE4N0I3QjU2MURFNTFhNGQ3RGU1MjFlY2UifQ",
+    "payload": "eyJkb21haW4iOiJjYXN0LmZhdWNldGRyb3BzLmlvIn0",
+    "signature": "iMXQlqCGzOg3pKdryz464YYx4aFnBQd6zo7agXxiN2JkHlckL9yYJi4mp3GwYaMLnnzJ18PA20RnhdicCLyZYxs="
+  },
+  "frame": {
+    "version": "1",
+    "name": "Example Frame",
+    "iconUrl": "https://cast.faucetdrops.io/favicon.png",
+    "homeUrl": "https://cast.faucetdrops.io",
+    "imageUrl": "https://cast.faucetdrops.io/default.jpeg",
+    "buttonTitle": "Check this out",
+    "splashImageUrl": "https://cast.faucetdrops.io/default.jpeg",
+    "splashBackgroundColor": "#020817f",
+    "webhookUrl": "https://cast.faucetdrops.io/api/webhook"
+  }
+}

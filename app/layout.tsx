@@ -6,7 +6,7 @@ import { Providers } from "@/components/provider" // Import the client component
 
 const inter = Inter({ subsets: ["latin"] })
 
-const appUrl = process.env.NEXT_PUBLIC_URL || "https://farcastdrop.vercel.app";
+const appUrl = process.env.NEXT_PUBLIC_URL || "https://cast.faucetdrops.io";
 
 // Define the Farcaster Frame Metadata
 const frameMetadata = JSON.stringify({
@@ -18,7 +18,7 @@ const frameMetadata = JSON.stringify({
       type: "launch_frame",
       name: "FaucetDrops",
       url: appUrl,
-      splashImageUrl: `${appUrl}/splash.png`,
+      splashImageUrl: `${appUrl}/favicon.png`,
       splashBackgroundColor: "#020817",
     },
   },
@@ -26,7 +26,7 @@ const frameMetadata = JSON.stringify({
 
 export const metadata: Metadata = {
   title: "FaucetDrops",
-  description: "Token Drops Made Easy 💧",
+  description: "Automated onchain reward and engagement platform 💧",
   icons: {
     icon: "/favicon.png",
   },
