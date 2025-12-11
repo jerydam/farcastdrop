@@ -328,7 +328,6 @@ export default function Head() {
               </div>
               
               <div className="py-1">
-                <NetworkSelector className='w-full' />
               </div>
             </div>
           </div>
@@ -366,7 +365,6 @@ export default function Head() {
           </div>
 
           <div className="py-1">
-            <NetworkSelector />
           </div>
         </div>
       </div>
