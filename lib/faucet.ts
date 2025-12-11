@@ -114,49 +114,70 @@ async function estimateGasWithFallback(
   }
 }
 
+// 1. Add this map near your imports/constants
+const RPC_URLS: Record<string, string> = {
+  "42220": "https://forno.celo.org",
+  "44787": "https://alfajores-forno.celo-testnet.org",
+  "8453": "https://mainnet.base.org",
+  "84532": "https://sepolia.base.org", 
+  "4202": "https://rpc.sepolia-api.lisk.com", 
+  "1135": "https://rpc.lisk.com",
+}
+
 /**
- * 💡 CRITICAL FIX: Safe Wait For Receipt
- * Handles "Provider does not support eth_getTransactionReceipt" (Error 4200)
- * by polling the RPC provider directly if the Wallet refuses to answer.
+ * 💡 CRITICAL FIX: Safe Wait with RPC Switching
+ * If the wallet blocks receipt checks (Error 4200), we switch to a public RPC provider.
  */
 async function safeWaitForReceipt(
     tx: any, 
-    provider: BrowserProvider | JsonRpcProvider
+    walletProvider: BrowserProvider | JsonRpcProvider,
+    chainId?: bigint
 ) {
     try {
         // 1. Try standard wait first
         return await tx.wait();
     } catch (error: any) {
-        const msg = error?.message || "";
-        const code = error?.code;
-        
-        // 2. Catch compatibility errors (MiniPay, Farcaster, etc.)
-        if (
-            msg.includes("support") || 
-            msg.includes("eth_getTransactionReceipt") || 
-            code === 4200 || 
-            code === "UNKNOWN_ERROR"
-        ) {
-            console.warn("⚠️ Wallet blocked receipt call. Polling RPC directly...", tx.hash);
-            
-            // 3. Poll the provider manually for ~60 seconds
-            let attempts = 0;
-            while (attempts < 30) { 
-                await new Promise(r => setTimeout(r, 2000)); // Wait 2s
-                try {
-                    const receipt = await provider.getTransactionReceipt(tx.hash);
-                    if (receipt) {
-                        console.log("✅ Receipt found via manual polling");
-                        return receipt;
-                    }
-                } catch (e) {
-                    // Ignore network errors during polling
-                }
-                attempts++;
+        console.warn("⚠️ Wallet blocked receipt call. Switching to public RPC...", error.message || error);
+
+        // 2. Identify the correct Chain ID
+        let targetChainId = chainId;
+        if (!targetChainId) {
+            try { 
+                const net = await walletProvider.getNetwork();
+                targetChainId = net.chainId;
+            } catch (e) {
+                console.warn("Could not determine chainId from wallet");
             }
         }
-        // If it wasn't a compatibility error, or polling timed out, re-throw
-        throw error;
+
+        // 3. Create a fresh, read-only Provider (Bypassing the wallet completely)
+        const rpcUrl = targetChainId ? RPC_URLS[targetChainId.toString()] : null;
+        
+        if (!rpcUrl) {
+            // If we can't find a public RPC, we have to re-throw because the wallet is broken
+            throw new Error(`Transaction sent (${tx.hash}), but wallet refused to confirm it and no public RPC found for chain ${targetChainId}. Check block explorer.`);
+        }
+
+        const publicProvider = new JsonRpcProvider(rpcUrl);
+        console.log(`Using public RPC for confirmation: ${rpcUrl}`);
+
+        // 4. Poll the PUBLIC provider
+        let attempts = 0;
+        while (attempts < 40) { // Wait up to 80 seconds
+            await new Promise(r => setTimeout(r, 2000));
+            try {
+                const receipt = await publicProvider.getTransactionReceipt(tx.hash);
+                if (receipt) {
+                    console.log("✅ Receipt confirmed via public RPC");
+                    return receipt;
+                }
+            } catch (e) {
+                // Ignore network blips on the public RPC
+            }
+            attempts++;
+        }
+        
+        throw new Error("Transaction timed out on public RPC. It may still be pending.");
     }
 }
 
