@@ -20,10 +20,10 @@ const CACHE_DURATION = 5 * 60 * 1000;
 
 // Default constant values
 const DEFAULT_DASHBOARD_DATA: DashboardData = {
-  totalFaucets: 66,
-  totalTransactions: 2413,
-  uniqueUsers: 720,
-  totalClaims: 960,
+  totalFaucets: 78,
+  totalTransactions: 7956,
+  uniqueUsers: 1451,
+  totalClaims: 1707,
   lastUpdated: new Date().toISOString()
 };
 
