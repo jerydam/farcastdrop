@@ -27,7 +27,7 @@ const DEFAULT_DASHBOARD_DATA: DashboardData = {
   lastUpdated: new Date().toISOString()
 };
 
-// Helper functions for localStorage
+// ... [Helper functions saveToLocalStorage, loadFromLocalStorage, isCacheValid remain unchanged] ...
 function saveToLocalStorage(key: string, data: any) {
   try {
     if (typeof window !== 'undefined') {
@@ -78,12 +78,7 @@ const DashboardContext = createContext<DashboardContextType>({
 
 export const useDashboardContext = () => useContext(DashboardContext)
 
-function calculateChange(current: number, previous: number): string {
-  if (previous === 0) return current > 0 ? "+∞%" : "+0.0%"
-  const change = ((current - previous) / previous) * 100
-  return `${change >= 0 ? '+' : ''}${change.toFixed(1)}%`
-}
-
+// ... [useDashboardData hook remains unchanged] ...
 function useDashboardData() {
   const [data, setData] = useState<DashboardData>(DEFAULT_DASHBOARD_DATA)
   const [loading, setLoading] = useState(true)
@@ -94,11 +89,9 @@ function useDashboardData() {
     setError(null)
     
     try {
-      // Try localStorage first
       if (isCacheValid()) {
         const cachedSummary = loadFromLocalStorage<DashboardSummary>(DASHBOARD_STORAGE_KEYS.DASHBOARD_SUMMARY)
         if (cachedSummary) {
-          console.log('Using cached dashboard summary from localStorage')
           setData({
             totalFaucets: cachedSummary.total_faucets,
             totalTransactions: cachedSummary.total_transactions,
@@ -111,10 +104,8 @@ function useDashboardData() {
         }
       }
 
-      // Fallback to Supabase
       const supabaseSummary = await DataService.loadDashboardSummary()
       if (supabaseSummary && DataService.isDataFresh(supabaseSummary.updated_at)) {
-        console.log('Using fresh dashboard summary from Supabase')
         const dashboardData = {
           totalFaucets: supabaseSummary.total_faucets,
           totalTransactions: supabaseSummary.total_transactions,
@@ -122,24 +113,18 @@ function useDashboardData() {
           totalClaims: supabaseSummary.total_claims,
           lastUpdated: supabaseSummary.updated_at
         }
-        
         setData(dashboardData)
-        
-        // Cache in localStorage
         saveToLocalStorage(DASHBOARD_STORAGE_KEYS.DASHBOARD_SUMMARY, supabaseSummary)
         saveToLocalStorage(DASHBOARD_STORAGE_KEYS.LAST_UPDATED, Date.now())
-        
         setLoading(false)
         return
       }
 
-      // Fallback to individual localStorage values if available
       const totalFaucets = loadFromLocalStorage<number>('faucet_total_count') || DEFAULT_DASHBOARD_DATA.totalFaucets
       const totalTransactions = loadFromLocalStorage<number>('transaction_total_count') || DEFAULT_DASHBOARD_DATA.totalTransactions
       const uniqueUsers = loadFromLocalStorage<number>('total_unique_users') || DEFAULT_DASHBOARD_DATA.uniqueUsers
       const totalClaims = loadFromLocalStorage<number>('totalclaim') || DEFAULT_DASHBOARD_DATA.totalClaims
       
-      console.log('Using individual cached values as fallback')
       setData({
         totalFaucets,
         totalTransactions,
@@ -161,35 +146,34 @@ function useDashboardData() {
     loadStoredData()
   }, [])
 
-  // Auto-refresh data every 5 minutes by re-reading from storage
   useEffect(() => {
     const interval = setInterval(() => {
       loadStoredData()
     }, CACHE_DURATION)
-
     return () => clearInterval(interval)
   }, [])
 
   return { data, loading, error }
 }
 
+// Updated colors: White bg for light mode, dark slate for dark mode
 function StatCardSkeleton() {
   return (
-    <div className="bg-[#020817] rounded-xl border border-[#020817]/50 p-4">
+    <div className="bg-white dark:bg-[#020817] rounded-xl border border-slate-200 dark:border-slate-800 p-4">
       <div className="flex items-center justify-between mb-3">
-        <div className="h-4 w-24 bg-[#020817] animate-pulse rounded" />
-        <div className="h-5 w-5 bg-[#020817] animate-pulse rounded" />
+        <div className="h-4 w-24 bg-slate-100 dark:bg-slate-800 animate-pulse rounded" />
+        <div className="h-5 w-5 bg-slate-100 dark:bg-slate-800 animate-pulse rounded" />
       </div>
-      <div className="h-8 w-12 bg-[#020817] animate-pulse rounded" />
+      <div className="h-8 w-12 bg-slate-100 dark:bg-slate-800 animate-pulse rounded" />
     </div>
   )
 }
 
 function ErrorCard({ message }: { message: string }) {
   return (
-    <Card className="bg-red-950/50 border-red-900/50">
+    <Card className="bg-red-50 dark:bg-red-950/50 border-red-200 dark:border-red-900/50">
       <CardContent className="pt-6">
-        <div className="text-center text-red-400">
+        <div className="text-center text-red-600 dark:text-red-400">
           <p className="text-sm">{message}</p>
         </div>
       </CardContent>
@@ -214,19 +198,20 @@ function StatCard({
     return <StatCardSkeleton />
   }
 
+  // Updated styling for light/dark mode compatibility
   return (
-    <div className="bg-[#020817] rounded-xl border border-slate-900 p-4 hover:bg-slate-800/70 transition-all ">
+    <div className="bg-white dark:bg-[#020817] rounded-xl border border-slate-200 dark:border-slate-800 p-4 hover:shadow-md dark:hover:bg-slate-800/70 transition-all">
       <div className="flex items-center justify-between mb-3">
-        <p className="text-sm text-slate-400 font-medium">
+        <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">
           {title}
         </p>
         <Icon className="h-5 w-5 text-slate-500" />
       </div>
-      <div className="text-3xl font-bold text-white">
+      <div className="text-3xl font-bold text-slate-900 dark:text-white">
         {value?.toLocaleString() ?? 0}
       </div>
       {lastUpdated && (
-        <p className="text-xs text-slate-500 mt-1">
+        <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
           Updated: {new Date(lastUpdated).toLocaleTimeString()}
         </p>
       )}
@@ -258,19 +243,19 @@ function DashboardContent({ data: propData, loading: propLoading, error: propErr
   const finalError = propError ?? error
 
   return (
-    <div className="w-full min-h-screen bg-gray-50 dark:bg-gray-900 border-dashed border-2 border-gray-300 dark:border-gray-700 p-4 md:p-6 lg:p-8">
+    <div className="w-full min-h-screen bg-gray-50 dark:bg-gray-950 border-dashed border-2 border-gray-200 dark:border-gray-800 p-4 md:p-6 lg:p-8 transition-colors duration-300">
       <div className="max-w-7xl mx-auto space-y-6">
         <div className="text-center md:text-left">
-          <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold tracking-tight text-white">
+          <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold tracking-tight text-slate-900 dark:text-white">
             Analytics Dashboard
           </h1>
-          <p className="text-slate-400 mt-2">
-            Data served from all Chain
+          <p className="text-slate-500 dark:text-slate-400 mt-2">
+            Data served from all Chains
           </p>
           {finalLoading && (
             <div className="flex items-center justify-center md:justify-start mt-2">
-              <Loader2 className="h-4 w-4 animate-spin mr-2 text-slate-400" />
-              <span className="text-sm text-slate-400">Loading cached analytics...</span>
+              <Loader2 className="h-4 w-4 animate-spin mr-2 text-slate-500 dark:text-slate-400" />
+              <span className="text-sm text-slate-500 dark:text-slate-400">Loading cached analytics...</span>
             </div>
           )}
         </div>
@@ -314,47 +299,49 @@ function DashboardContent({ data: propData, loading: propLoading, error: propErr
         </div>
 
         <Tabs defaultValue="faucets" className="w-full">
-          <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 h-auto bg-gray-50 dark:bg-gray-900 border-dashed border-2 border-gray-300 dark:border-gray-700 rounded-xl p-1">
+          {/* Updated TabsList to look good in both modes */}
+          <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 h-auto bg-white dark:bg-gray-900 border border-slate-200 dark:border-gray-700 rounded-xl p-1 shadow-sm">
             <TabsTrigger 
               value="faucets" 
-              className="text-xs md:text-sm px-2 py-2 md:px-4 rounded-lg data-[state=active]:bg-[#020817] data-[state=active]:text-white"
+              className="text-xs md:text-sm px-2 py-2 md:px-4 rounded-lg data-[state=active]:bg-slate-900 dark:data-[state=active]:bg-[#020817] data-[state=active]:text-white text-slate-600 dark:text-slate-400"
             >
               <span className="hidden sm:inline">Faucets Created</span>
               <span className="sm:hidden">Faucets</span>
             </TabsTrigger>
             <TabsTrigger 
               value="transactions" 
-              className="text-xs md:text-sm px-2 py-2 md:px-4 rounded-lg data-[state=active]:bg-[#020817] data-[state=active]:text-white"
+              className="text-xs md:text-sm px-2 py-2 md:px-4 rounded-lg data-[state=active]:bg-slate-900 dark:data-[state=active]:bg-[#020817] data-[state=active]:text-white text-slate-600 dark:text-slate-400"
             >
               <span className="hidden sm:inline">Transactions</span>
               <span className="sm:hidden">Transactions</span>
             </TabsTrigger>
             <TabsTrigger 
               value="users" 
-              className="text-xs md:text-sm px-2 py-2 md:px-4 rounded-lg data-[state=active]:bg-[#020817] data-[state=active]:text-white"
+              className="text-xs md:text-sm px-2 py-2 md:px-4 rounded-lg data-[state=active]:bg-slate-900 dark:data-[state=active]:bg-[#020817] data-[state=active]:text-white text-slate-600 dark:text-slate-400"
             >
               <span className="hidden sm:inline">New Users</span>
               <span className="sm:hidden">Users</span>
             </TabsTrigger>
             <TabsTrigger 
               value="claims" 
-              className="text-xs md:text-sm px-2 py-2 md:px-4 rounded-lg data-[state=active]:bg-[#020817] data-[state=active]:text-white"
+              className="text-xs md:text-sm px-2 py-2 md:px-4 rounded-lg data-[state=active]:bg-slate-900 dark:data-[state=active]:bg-[#020817] data-[state=active]:text-white text-slate-600 dark:text-slate-400"
             >
               <span className="hidden sm:inline">Drops</span>
               <span className="sm:hidden">Drops</span>
             </TabsTrigger>
           </TabsList>
 
+          {/* Updated Chart Cards to support Light/Dark */}
           <TabsContent value="faucets" className="space-y-4 mt-6">
-            <Card className="bg-[#020817] border-[#020817]/50">
+            <Card className="bg-white dark:bg-[#020817] border-slate-200 dark:border-slate-800 shadow-sm">
               <CardHeader className="px-4 md:px-6">
                 <div className="flex items-center gap-2">
-                  <BarChart3 className="h-5 w-5 text-blue-400" />
-                  <CardTitle className="text-lg md:text-xl text-white">
+                  <BarChart3 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  <CardTitle className="text-lg md:text-xl text-slate-900 dark:text-white">
                     Faucets Created
                   </CardTitle>
                 </div>
-                <CardDescription className="text-sm text-slate-400">
+                <CardDescription className="text-sm text-slate-500 dark:text-slate-400">
                   Number of new faucets created across all networks
                 </CardDescription>
               </CardHeader>
@@ -367,15 +354,15 @@ function DashboardContent({ data: propData, loading: propLoading, error: propErr
           </TabsContent>
 
           <TabsContent value="transactions" className="space-y-4 mt-6">
-            <Card className="bg-[#020817] border-[#020817]/50">
+            <Card className="bg-white dark:bg-[#020817] border-slate-200 dark:border-slate-800 shadow-sm">
               <CardHeader className="px-4 md:px-6">
                 <div className="flex items-center gap-2">
-                  <TrendingUp className="h-5 w-5 text-blue-400" />
-                  <CardTitle className="text-lg md:text-xl text-white">
+                  <TrendingUp className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  <CardTitle className="text-lg md:text-xl text-slate-900 dark:text-white">
                     Transactions
                   </CardTitle>
                 </div>
-                <CardDescription className="text-sm text-slate-400">
+                <CardDescription className="text-sm text-slate-500 dark:text-slate-400">
                   Total number of transactions across all networks
                 </CardDescription>
               </CardHeader>
@@ -388,15 +375,15 @@ function DashboardContent({ data: propData, loading: propLoading, error: propErr
           </TabsContent>
 
           <TabsContent value="users" className="space-y-4 mt-6">
-            <Card className="bg-[#020817] border-[#020817]/50">
+            <Card className="bg-white dark:bg-[#020817] border-slate-200 dark:border-slate-800 shadow-sm">
               <CardHeader className="px-4 md:px-6">
                 <div className="flex items-center gap-2">
-                  <Users className="h-5 w-5 text-blue-400" />
-                  <CardTitle className="text-lg md:text-xl text-white">
+                  <Users className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  <CardTitle className="text-lg md:text-xl text-slate-900 dark:text-white">
                     New Users
                   </CardTitle>
                 </div>
-                <CardDescription className="text-sm text-slate-400">
+                <CardDescription className="text-sm text-slate-500 dark:text-slate-400">
                   Number of unique users across all networks
                 </CardDescription>
               </CardHeader>
@@ -409,15 +396,15 @@ function DashboardContent({ data: propData, loading: propLoading, error: propErr
           </TabsContent>
 
           <TabsContent value="claims" className="space-y-4 mt-6">
-            <Card className="bg-[#020817] border-[#020817]/50">
+            <Card className="bg-white dark:bg-[#020817] border-slate-200 dark:border-slate-800 shadow-sm">
               <CardHeader className="px-4 md:px-6">
                 <div className="flex items-center gap-2">
-                  <PieChart className="h-5 w-5 text-blue-400" />
-                  <CardTitle className="text-lg md:text-xl text-white">
+                  <PieChart className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  <CardTitle className="text-lg md:text-xl text-slate-900 dark:text-white">
                     Drops
                   </CardTitle>
                 </div>
-                <CardDescription className="text-sm text-slate-400">
+                <CardDescription className="text-sm text-slate-500 dark:text-slate-400">
                   Number of drops made across all networks
                 </CardDescription>
               </CardHeader>
