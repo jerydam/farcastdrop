@@ -14,6 +14,8 @@ import { WagmiProvider } from 'wagmi'
 import { wagmiAdapter, queryClient } from '@/config/appkit'
 import sdk from "@farcaster/miniapp-sdk" // 1. Import Farcaster SDK
 
+
+
 const inter = Inter({ subsets: ["latin"] })
 
 export default function RootLayout({
