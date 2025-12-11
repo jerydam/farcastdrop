@@ -1,57 +1,74 @@
-import type { Metadata } from "next"
+"use client"
+
+import type React from "react"
+import { useEffect } from "react" // Import useEffect
 import { Inter } from "next/font/google"
 import "./globals.css"
+import { ThemeProvider } from "@/components/theme-provider"
+import { Toaster } from "@/components/ui/toaster"
+import { NetworkProvider } from "@/hooks/use-network"
+import { WalletProvider } from "@/components/wallet-provider"
 import { Footer } from "@/components/footer"
-import { Providers } from "@/components/providers" // Import the new component
+import { QueryClientProvider } from '@tanstack/react-query'
+import { WagmiProvider } from 'wagmi'
+import { wagmiAdapter, queryClient } from '@/config/appkit'
+import sdk from "@farcaster/miniapp-sdk" // 1. Import Farcaster SDK
 
 const inter = Inter({ subsets: ["latin"] })
-
-// Define the MiniApp metadata for the head tag
-// This tells Farcaster clients how to launch your frame
-const appUrl = process.env.NEXT_PUBLIC_URL || "https://app.faucetdrops.io";
-
-const frameMetadata = JSON.stringify({
-  version: "next",
-  imageUrl: `${appUrl}/opengraph-image.png`, // Make sure this image exists
-  button: {
-    title: "Drip Tokens 💧",
-    action: {
-      type: "launch_frame",
-      name: "FaucetDrops",
-      url: appUrl,
-      splashImageUrl: `${appUrl}/splash.png`,
-      splashBackgroundColor: "#020817",
-    },
-  },
-});
-
-export const metadata: Metadata = {
-  title: "FaucetDrops ",
-  description: "Token Drops Made Easy 💧",
-  icons: {
-    icon: "/favicon.png",
-  },
-  other: {
-    "fc:frame": frameMetadata,
-  },
-};
 
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
+  
+  // 2. Initialize Farcaster SDK on mount
+  useEffect(() => {
+    const init = async () => {
+      try {
+        // This tells Farcaster the app is ready to render.
+        // If you don't call this, the user sees a permanent loading spinner.
+        // We add a small delay to ensure React has painted the initial state.
+        setTimeout(() => {
+          sdk.actions.ready();
+        }, 300);
+      } catch (error) {
+        console.warn("Failed to initialize Farcaster SDK", error);
+      }
+    };
+    init();
+  }, []);
+
   return (
     <html lang="en">
+      <head>
+        <link rel="icon" href="/favicon.png" />
+        <title>FaucetDrops</title>
+        <meta name="description" content="Token Drops Made Easy 💧" />
+      </head>
       <body className={inter.className}>
-        <Providers>
-          <div className="min-h-screen flex flex-col">
-            <main className="flex-1">
-              {children}
-            </main>
-            <Footer />
-          </div>
-        </Providers>
+        <ThemeProvider 
+          attribute="class" 
+          defaultTheme="system" 
+          enableSystem 
+          disableTransitionOnChange
+        >
+          <WagmiProvider config={wagmiAdapter.wagmiConfig}>
+            <QueryClientProvider client={queryClient}>
+              <NetworkProvider>
+                <WalletProvider>
+                  <div className="min-h-screen flex flex-col">
+                    <main className="flex-1">
+                      {children}
+                    </main>
+                    <Footer />
+                  </div>
+                  <Toaster />
+                </WalletProvider>
+              </NetworkProvider>
+            </QueryClientProvider>
+          </WagmiProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

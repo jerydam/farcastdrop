@@ -1,18 +1,18 @@
 {
   "accountAssociation": {
     "header": "eyJmaWQiOjgxMjkzMCwidHlwZSI6ImN1c3RvZHkiLCJrZXkiOiIweDk4OTVFMzg1OTEzODlmZmE4N0I3QjU2MURFNTFhNGQ3RGU1MjFlY2UifQ",
-    "payload": "eyJkb21haW4iOiJmYXJjYXN0ZHJvcC52ZXJjZWwuYXBwIn0",
-    "signature": "p/wMyh+ZQDpHo75rkOVAGYZvB2vvYQWTlsYtp9xrT+JQIl/vfMKU4WyZ+FctzfSlTFRniZVEaq86cfQZu41tahs="
+    "payload": "eyJkb21haW4iOiJhcHAuZmF1Y2V0ZHJvcHMuaW8ifQ",
+    "signature": "NTANO0BaYV/zXRFPf65xgAtUr1wMVgQWWuJqG9AKobM/wyte3eKjsGCDIVIZ+C9X40N8OP6Jlm/jHtxljB4XEhs="
   },
   "frame": {
     "version": "1",
-    "name": "Example Frame",
-    "iconUrl": "https://farcastdrop.vercel.app/icon.png",
-    "homeUrl": "https://farcastdrop.vercel.app",
-    "imageUrl": "https://farcastdrop.vercel.app/image.png",
-    "buttonTitle": "Check this out",
-    "splashImageUrl": "https://farcastdrop.vercel.app/splash.png",
+    "name": "Faucetdrops",
+    "iconUrl": "https://app.faucetdrops.io/icon.png",
+    "homeUrl": "https://app.faucetdrops.io",
+    "imageUrl": "https://app.faucetdrops.io/image.png",
+    "buttonTitle": "Start dripping",
+    "splashImageUrl": "https://app.faucetdrops.io/splash.png",
     "splashBackgroundColor": "#020817",
-    "webhookUrl": "https://farcastdrop.vercel.app/api/webhook"
+    "webhookUrl": "https://app.faucetdrops.io/api/webhook"
   }
 }
