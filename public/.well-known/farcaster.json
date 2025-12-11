@@ -12,7 +12,7 @@
     "imageUrl": "https://cast.faucetdrops.io/image.png",
     "buttonTitle": "Check this out",
     "splashImageUrl": "https://cast.faucetdrops.io/splash.png",
-    "splashBackgroundColor": "#020817f",
+    "splashBackgroundColor": "#020817",
     "webhookUrl": "https://cast.faucetdrops.io/api/webhook"
   }
 }
