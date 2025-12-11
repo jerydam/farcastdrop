@@ -2,14 +2,15 @@
 
 import { Alert } from "@/components/ui/alert"
 import { useState, useEffect, useCallback, useMemo } from "react"
-// UPDATE: Ensure this path matches where you saved the file. 
-// If it is in components, use "@/components/wallet-provider"
-import { useWallet } from "@/components/wallet-provider" 
-import { useNetwork, isFactoryTypeAvailable } from "@/hooks/use-network" // Removed unused getAvailableFactoryTypes
+import { useWallet } from "@/hooks/use-wallet"
+import { useNetwork, isFactoryTypeAvailable, getAvailableFactoryTypes } from "@/hooks/use-network"
+import { useAppKitAccount, useAppKitNetwork } from '@reown/appkit/react'
+import { useAccount, useChainId } from 'wagmi'
 import { useToast } from "@/hooks/use-toast"
 import {
   createFaucet,
   checkFaucetNameExists,
+  checkFaucetNameExistsAcrossAllFactories
 } from "@/lib/faucet"
 import {
   Card,
@@ -549,15 +550,16 @@ const FAUCET_USE_CASE_TEMPLATES: Record<FaucetType, Array<{
 }
 
 export default function CreateFaucetWizard() {
-  // ✅ MIGRATION: consolidated hooks into useWallet
-  const { provider, connect, address, isConnected, chainId } = useWallet()
+  const { provider, connect } = useWallet()
   const { network, getFactoryAddress, networks } = useNetwork()
+  const { address, isConnected } = useAppKitAccount()
+  const chainId = useChainId()
+  const { chainId: appKitChainId } = useAppKitNetwork()
   const { toast } = useToast()
   const router = useRouter()
 
-  // ✅ MIGRATION: Simplified chain ID logic
-  const effectiveChainId = chainId
-
+  const effectiveChainId = (chainId || appKitChainId) as number
+  
   const currentNetwork = useMemo(() => {
     if (!effectiveChainId) return null
     const matched = networks.find(n => n.chainId === effectiveChainId)
@@ -1448,7 +1450,15 @@ export default function CreateFaucetWizard() {
             </AlertDescription>
           </Alert>
         )}
-        {/* Removed AppKit Chain ID check as it's no longer relevant */}
+        {isConnected && (networks.find((net) => net.chainId === chainId)?.chainId !== appKitChainId) && (
+          <Alert className="border-red-500 bg-red-50 dark:bg-red-900/20">
+            <AlertTriangle className="h-4 w-4 text-red-600" />
+            <AlertTitle className="text-red-700 dark:text-red-300">Wrong Network Selected</AlertTitle>
+            <AlertDescription className="text-red-700 dark:text-red-300">
+              Please switch to a supported network to create a faucet.
+            </AlertDescription>
+          </Alert>
+        )}
         {unavailableTypes.length > 0 && network && (
           <Alert className="border-orange-500 bg-orange-50 dark:bg-orange-900/20">
             <AlertTriangle className="h-4 w-4 text-orange-600" />

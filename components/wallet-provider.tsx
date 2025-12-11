@@ -2,193 +2,288 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 import { BrowserProvider, type JsonRpcSigner } from "ethers"
-import sdk from "@farcaster/miniapp-sdk"
+import { useDisconnect, useSwitchChain, useAccount, useChainId, useConnect } from 'wagmi'
 import { useToast } from "@/hooks/use-toast"
+import sdk from "@farcaster/miniapp-sdk"
 
 interface WalletContextType {
-  provider: BrowserProvider | null
-  signer: JsonRpcSigner | null
-  address: string | null
-  chainId: number | null
-  isConnected: boolean
-  isConnecting: boolean
-  connect: () => Promise<void>
-  disconnect: () => void // In Farcaster, this is mostly a no-op or UI reset
-  switchChain: (newChainId: number) => Promise<void>
-  ensureCorrectNetwork: (requiredChainId: number) => Promise<boolean>
+  provider: BrowserProvider | null
+  signer: JsonRpcSigner | null
+  address: string | null
+  chainId: number | null
+  isConnected: boolean
+  isConnecting: boolean
+  connect: () => Promise<void>
+  disconnect: () => void
+  ensureCorrectNetwork: (requiredChainId: number) => Promise<boolean>
+  switchChain: (newChainId: number) => Promise<void>
 }
 
 export const WalletContext = createContext<WalletContextType>({
-  provider: null,
-  signer: null,
-  address: null,
-  chainId: null,
-  isConnected: false,
-  isConnecting: false,
-  connect: async () => {},
-  disconnect: () => {},
-  switchChain: async () => {},
-  ensureCorrectNetwork: async () => false,
+  provider: null,
+  signer: null,
+  address: null,
+  chainId: null,
+  isConnected: false,
+  isConnecting: false,
+  connect: async () => {},
+  disconnect: () => {},
+  ensureCorrectNetwork: async () => false,
+  switchChain: async () => {},
 })
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const [provider, setProvider] = useState<BrowserProvider | null>(null)
-  const [signer, setSigner] = useState<JsonRpcSigner | null>(null)
-  const [address, setAddress] = useState<string | null>(null)
-  const [chainId, setChainId] = useState<number | null>(null)
-  const [isConnecting, setIsConnecting] = useState(true) // Start loading
-  const { toast } = useToast()
+  const [provider, setProvider] = useState<BrowserProvider | null>(null)
+  const [signer, setSigner] = useState<JsonRpcSigner | null>(null)
+  const [isReady, setIsReady] = useState(false)
+  const { toast } = useToast()
+  
+  const { connectAsync } = useConnect()
+  const { disconnect: wagmiDisconnect } = useDisconnect()
+  const { switchChain: wagmiSwitchChain } = useSwitchChain()
+  
+  const { address, isConnected: wagmiConnected, isConnecting } = useAccount()
+  const chainId = useChainId()
+  const [isFarcaster, setIsFarcaster] = useState(false);
 
-  // Initialize Farcaster SDK
   useEffect(() => {
-    const initFarcaster = async () => {
-      try {
-        // 1. Initialize SDK
-        sdk.actions.ready()
+    // Check if running in Farcaster frame
+    if (typeof window !== 'undefined') {
+       // Simple check provided by SDK
+       try {
+         sdk.actions.ready(); // Safe to call multiple times, ensures SDK is loaded
+         // There isn't a direct "isInMiniApp" boolean property, 
+         // but checking if sdk.wallet exists is a good proxy.
+         if (sdk.wallet) setIsFarcaster(true);
+       } catch (e) {
+         // Not in Farcaster
+       }
+    }
+  }, []);
+  
+  useEffect(() => {
+    const updateProviderAndSigner = async () => {
+      // LOGIC BRANCH: Farcaster vs Standard Web
+      
+      // 1. FARCASTER ENVIRONMENT
+      if (isFarcaster) {
+        try {
+          console.log('[WalletProvider] Detected Farcaster Environment');
+          const farcasterProvider = sdk.wallet.getEthereumProvider();
+          
+          // Wrap the Farcaster provider with Ethers
+          const ethersProvider = new BrowserProvider(farcasterProvider as any);
+          const ethersSigner = await ethersProvider.getSigner();
 
-        // 2. Check if we are in a Frame/MiniApp environment
-        if (sdk.wallet) {
-            const miniappProvider = sdk.wallet.getEthereumProvider()
-            const ethersProvider = new BrowserProvider(miniappProvider as any)
-            
-            setProvider(ethersProvider)
-
-            // 3. Get Network Data
-            const network = await ethersProvider.getNetwork()
-            setChainId(Number(network.chainId))
-
-            // 4. Get Accounts (Auto-connect in Farcaster)
-            const accounts = await ethersProvider.listAccounts()
-            if (accounts.length > 0) {
-                const ethersSigner = await ethersProvider.getSigner()
-                setSigner(ethersSigner)
-                setAddress(accounts[0].address)
-            }
-        } else {
-            console.warn("Not running inside a Farcaster client")
+          setProvider(ethersProvider);
+          setSigner(ethersSigner);
+          setIsReady(true);
+          
+          // In Farcaster, we are "always" connected via their wallet
+          return; 
+        } catch (error) {
+          console.error('[WalletProvider] Farcaster connection error', error);
         }
-      } catch (error) {
-        console.error("Farcaster SDK Init Error:", error)
-      } finally {
-        setIsConnecting(false)
+      }
+
+      // 2. STANDARD WEB ENVIRONMENT (Your existing logic)
+      if (wagmiConnected && address && typeof window !== 'undefined' && window.ethereum) {
+        try {
+          const ethersProvider = new BrowserProvider(window.ethereum);
+          const ethersSigner = await ethersProvider.getSigner();
+          
+          setProvider(ethersProvider);
+          setSigner(ethersSigner);
+          setIsReady(true);
+        } catch (error) {
+          setProvider(null);
+          setSigner(null);
+          setIsReady(false);
+        }
+      } else {
+        setProvider(null);
+        setSigner(null);
+        setIsReady(false);
       }
     }
 
-    initFarcaster()
-  }, [])
+    updateProviderAndSigner();
+  }, [wagmiConnected, address, chainId, isFarcaster]);
 
-  // Handle Event Listeners (Chain changes, etc.)
-  useEffect(() => {
-    if (!provider) return
-
-    // Note: Farcaster SDK provider might not emit standard EIP-1193 events perfectly 
-    // depending on the client (Warpcast), but this is standard practice.
-    const handleChainChanged = (newChainId: string) => {
-        setChainId(parseInt(newChainId, 16))
-        window.location.reload() // Recommended for chain changes to avoid state drift
-    }
-
-    const handleAccountsChanged = async (accounts: string[]) => {
-        if (accounts.length === 0) {
-            setAddress(null)
-            setSigner(null)
-        } else {
-            setAddress(accounts[0])
-            const s = await provider.getSigner()
-            setSigner(s)
-        }
-    }
-
-    // Access the raw provider to add listeners
-    // @ts-ignore - ethers wraps the provider
-    if (provider.provider.on) {
-        // @ts-ignore
-        provider.provider.on('chainChanged', handleChainChanged)
-        // @ts-ignore
-        provider.provider.on('accountsChanged', handleAccountsChanged)
-    }
-
-    return () => {
-        // @ts-ignore
-        if (provider.provider.removeListener) {
-            // @ts-ignore
-            provider.provider.removeListener('chainChanged', handleChainChanged)
-             // @ts-ignore
-            provider.provider.removeListener('accountsChanged', handleAccountsChanged)
-        }
-    }
-  }, [provider])
-
+  // OVERRIDE: connect()
+  // If in Farcaster, connect is handled automatically, but we can trigger it explicitly if needed
   const connect = async () => {
-    if (!provider) return
-    setIsConnecting(true)
+    if (isFarcaster) {
+        // Farcaster handles connection, usually we just need to request accounts
+        const provider = sdk.wallet.getEthereumProvider();
+        await provider.request({ method: 'eth_requestAccounts' });
+        return;
+    }
+    
+    // Standard Wagmi connect
     try {
-      await provider.send("eth_requestAccounts", [])
-      const signer = await provider.getSigner()
-      setSigner(signer)
-      setAddress(await signer.getAddress())
+      await connectAsync();
     } catch (error: any) {
-      console.error(error)
-      toast({ title: "Connection Error", description: error.message, variant: "destructive" })
-    } finally {
-      setIsConnecting(false)
+      toast({ title: "Connection failed", description: error.message, variant: "destructive" });
     }
   }
+  // Stable connection state: only true when we have address AND provider/signer ready
+  const isConnected = wagmiConnected && !!address && !!provider && !!signer
 
-  const disconnect = () => {
-    // In Farcaster, you can't really "disconnect" the user since the wallet is 
-    // part of the app shell, but we can clear local state.
-    setSigner(null)
-    setAddress(null)
-  }
+  useEffect(() => {
+    const updateProviderAndSigner = async () => {
+      if (wagmiConnected && address && typeof window !== 'undefined' && window.ethereum) {
+        try {
+          console.log('[WalletProvider: Update] Setting up provider for address:', address, 'chainId:', chainId)
+          const ethersProvider = new BrowserProvider(window.ethereum)
+          const ethersSigner = await ethersProvider.getSigner()
+          
+          setProvider(ethersProvider)
+          setSigner(ethersSigner)
+          setIsReady(true)
+          
+          console.log('✅ [WalletProvider: Update] Wallet connected successfully:', { 
+            address, 
+            chainId,
+            hasProvider: !!ethersProvider,
+            hasSigner: !!ethersSigner
+          })
+        } catch (error) {
+          console.error('❌ [WalletProvider: Update] Error setting up provider/signer:', error)
+          setProvider(null)
+          setSigner(null)
+          setIsReady(false)
+        }
+      } else {
+        console.log('[WalletProvider: Update] Wallet disconnected or missing dependencies. Clearing state.')
+        setProvider(null)
+        setSigner(null)
+        setIsReady(false)
+      }
+    }
 
-  const switchChain = async (newChainId: number) => {
-    if (!provider) return
-    try {
-      const hexChainId = "0x" + newChainId.toString(16)
-      await provider.send("wallet_switchEthereumChain", [{ chainId: hexChainId }])
-      setChainId(newChainId)
-      toast({ title: "Network Switched", description: `Connected to chain ID ${newChainId}` })
-    } catch (error: any) {
-        // Error code 4902 means the chain hasn't been added to the wallet.
-        // Farcaster clients usually support major chains by default.
-        toast({ title: "Switch Failed", description: error.message, variant: "destructive" })
-        throw error
-    }
-  }
+    updateProviderAndSigner()
+  }, [wagmiConnected, address, chainId])
 
-  const ensureCorrectNetwork = async (requiredChainId: number): Promise<boolean> => {
-     if (!chainId) return false
-     if (chainId === requiredChainId) return true
-     
-     try {
-        await switchChain(requiredChainId)
-        return true
-     } catch (e) {
-        return false
-     }
-  }
+  useEffect(() => {
+    console.log('🔄 [WalletProvider: State] Connection update:', {
+      isConnected, // <-- This is the key flag for QuestCreator
+      isConnecting,
+      wagmiConnected,
+      address: address ? `${address.slice(0, 6)}...${address.slice(-4)}` : null,
+      chainId,
+      hasProvider: !!provider,
+      hasSigner: !!signer,
+      isReady,
+      fullAddress: address
+    })
+  }, [isConnected, isConnecting, wagmiConnected, address, chainId, provider, signer, isReady])
 
-  return (
-    <WalletContext.Provider
-      value={{
-        provider,
-        signer,
-        address,
-        chainId,
-        isConnected: !!address && !!signer,
-        isConnecting,
-        connect,
-        disconnect,
-        switchChain,
-        ensureCorrectNetwork
-      }}
-    >
-      {children}
-    </WalletContext.Provider>
-  )
+ 
+
+  const disconnect = () => {
+    try {
+      console.log('Disconnecting wallet...')
+      wagmiDisconnect()
+      setProvider(null)
+      setSigner(null)
+      setIsReady(false)
+      
+      toast({
+        title: "Wallet disconnected",
+        description: "Your wallet has been disconnected",
+      })
+    } catch (error) {
+      console.error("Error disconnecting:", error)
+    }
+  }
+
+  const switchChain = async (newChainId: number) => {
+    try {
+      console.log('Switching to chain:', newChainId)
+      await wagmiSwitchChain({ chainId: newChainId })
+      
+      toast({
+        title: "Network switched",
+        description: `Switched to chain ${newChainId}`,
+      })
+    } catch (error: any) {
+      console.error("Failed to switch network:", error)
+      toast({
+        title: "Network switch failed",
+        description: error.message || "Failed to switch network",
+        variant: "destructive",
+      })
+      throw error
+    }
+  }
+
+  const ensureCorrectNetwork = async (requiredChainId: number): Promise<boolean> => {
+    console.log('Ensuring correct network:', { 
+      current: chainId, 
+      required: requiredChainId,
+      isConnected 
+    })
+    
+    if (!isConnected) {
+      console.log('Wallet not connected, opening connection modal...')
+      try {
+        await connect()
+        await new Promise(resolve => setTimeout(resolve, 2000))
+      } catch (error) {
+        console.error('Failed to connect wallet:', error)
+        return false
+      }
+    }
+
+    if (chainId !== requiredChainId) {
+      console.log(`Network mismatch: current=${chainId}, required=${requiredChainId}`)
+      try {
+        await switchChain(requiredChainId)
+        await new Promise(resolve => setTimeout(resolve, 1500))
+        return true
+      } catch (error) {
+        console.error('Failed to switch network:', error)
+        return false
+      }
+    }
+
+    console.log('✅ On correct network')
+    return true
+  }
+
+  return (
+    <WalletContext.Provider
+      value={{
+        provider,
+        signer,
+        address: address || null,
+        chainId: chainId || null,
+        isConnected,
+        isConnecting,
+        connect,
+        disconnect,
+        ensureCorrectNetwork,
+        switchChain,
+      }}
+    >
+      {children}
+    </WalletContext.Provider>
+  )
 }
 
 export function useWallet() {
-  return useContext(WalletContext)
+  const context = useContext(WalletContext)
+  
+  useEffect(() => {
+    console.log('useWallet hook state:', {
+      address: context.address,
+      isConnected: context.isConnected,
+      chainId: context.chainId,
+      hasProvider: !!context.provider,
+      hasSigner: !!context.signer
+    })
+  }, [context])
+  
+  return context
 }
