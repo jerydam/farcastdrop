@@ -278,7 +278,7 @@ const FaucetUserView: React.FC<FaucetUserViewProps> = ({
 
                     {shouldShowSecretCodeInput && (
                         <div className="space-y-2">
-                            <Label htmlFor="secret-code" className="text-xs sm:text-sm">Drip Code</Label>
+                            <Label htmlFor="secret-code" className="text-xs sm:text-sm">Drop Code</Label>
                             <Input
                                 id="secret-code"
                                 placeholder="Enter 6-character code (e.g., ABC123)"
@@ -306,7 +306,7 @@ const FaucetUserView: React.FC<FaucetUserViewProps> = ({
                         onClick={handleBackendClaim}
                         disabled={!address || !canClaim}
                     >
-                        {!address ? "Connect Wallet to Drop" : hasClaimed ? "Already dropped" : "Drip Tokens"}
+                        {!address ? "Connect Wallet to Drip" : hasClaimed ? "Already dripped" : "Drip Tokens"}
                     </Button>
                 </CardFooter>
             </Card>

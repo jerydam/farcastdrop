@@ -137,7 +137,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
 
     // --- NEW PREVIEW STATE ---
     const [showPreviewDialog, setShowPreviewDialog] = useState(false);
-    
+   
     // --- Local Admin State ---
     const [activeTab, setActiveTab] = useState("fund");
     const [fundAmount, setFundAmount] = useState("");
@@ -242,7 +242,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
             }
         }
     }, [faucetDetails, faucetType, tokenDecimals]);
-    
+   
     // --- Separate Task Saving Function (Decoupled from Blockchain TX) ---
     const saveSocialMediaTasks = async (tasksToSend: any[]): Promise<boolean> => {
         if (!address || !chainId) return false;
@@ -265,7 +265,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
                 const errorData = await response.json();
                 throw new Error(errorData.detail || "Failed to save social media tasks.");
             }
-            
+           
             toast({ title: "Tasks Saved", description: "Social media tasks updated successfully (Backend only).", });
             setNewSocialLinks([]); // Clear new links upon successful backend save
             await loadFaucetDetails(); // Refresh dynamicTasks
@@ -356,10 +356,10 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
 
     const handleUpdateClaimParameters = async (): Promise<void> => {
         if (!address || !provider || !chainId || !checkNetwork()) return;
-        
+       
         // --- 1. Determine changes ---
         const hasTaskChanges = newSocialLinks.length > 0;
-        
+       
         // Convert current contract values to strings for comparison
         const currentClaimAmountStr = faucetType !== 'custom' ? formatUnits(faucetDetails.claimAmount, tokenDecimals) : '0';
         const currentStartTimeStr = faucetDetails.startTime ? new Date(Number(faucetDetails.startTime) * 1000).toISOString().slice(0, 16) : '';
@@ -370,7 +370,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
         const isStartTimeChanged = startTime !== currentStartTimeStr;
         const isEndTimeChanged = endTime !== currentEndTimeStr;
         const hasBlockchainChanges = isClaimAmountChanged || isStartTimeChanged || isEndTimeChanged;
-        
+       
         // Validation checks
         if (!hasTaskChanges && !hasBlockchainChanges) {
              toast({ title: "No Changes", description: "No parameters or tasks were modified.", variant: "default" });
@@ -379,8 +379,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
 
         if (!hasBlockchainChanges && hasTaskChanges) {
             // Case 1: Only tasks changed -> Save only to backend (NO BLOCKCHAIN TX)
-            const combinedTasks = [ ...dynamicTasks, ...newSocialLinks ].filter(link => link.url.trim() && link.handle.trim());
-            const tasksToSend = combinedTasks.map(link => ({
+            const tasksToSend = newSocialLinks.filter(link => link.url.trim() && link.handle.trim()).map(link => ({
                 title: `${link.action.charAt(0).toUpperCase() + link.action.slice(1)} ${link.handle}`,
                 description: `${link.action.charAt(0).toUpperCase() + link.action.slice(1)} our ${link.platform} account: ${link.handle}`,
                 url: link.url.trim(),
@@ -397,17 +396,16 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
         if (faucetType !== 'custom' && !claimAmount) { toast({ title: "Invalid Input", description: "Please fill in the drop amount", variant: "destructive", }); return }
         if (!startTime || !endTime) { toast({ title: "Invalid Input", description: "Please fill in the start and end times", variant: "destructive", }); return }
         if (startTimeError) { toast({ title: "Invalid Start Time", description: startTimeError, variant: "destructive", }); return }
-        
+       
         try {
             setIsUpdatingParameters(true);
             const claimAmountBN = faucetType === 'custom' ? BigInt(0) : parseUnits(claimAmount, tokenDecimals);
             const startTimestamp = Math.floor(new Date(startTime).getTime() / 1000);
             const endTimestamp = Math.floor(new Date(endTime).getTime() / 1000);
-            
+           
             // Handle tasks if they exist (sends combined list to backend)
             if (hasTaskChanges) {
-                const combinedTasks = [ ...dynamicTasks, ...newSocialLinks ].filter(link => link.url.trim() && link.handle.trim());
-                const tasksToSend = combinedTasks.map(link => ({
+                const tasksToSend = newSocialLinks.filter(link => link.url.trim() && link.handle.trim()).map(link => ({
                     title: `${link.action.charAt(0).toUpperCase() + link.action.slice(1)} ${link.handle}`,
                     description: `${link.action.charAt(0).toUpperCase() + link.action.slice(1)} our ${link.platform} account: ${link.handle}`,
                     url: link.url.trim(),
@@ -473,7 +471,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
         const isAdmin = adminList.some((admin) => admin.toLowerCase() === inputAddress.toLowerCase());
         setIsAddingAdmin(!isAdmin);
     }
-    
+   
     const handleManageAdmin = async (): Promise<void> => {
         if (!address || !provider || !newAdminAddress.trim() || !chainId || !checkNetwork()) return;
         if (newAdminAddress.toLowerCase() === faucetDetails?.owner.toLowerCase() || newAdminAddress.toLowerCase() === FACTORY_OWNER_ADDRESS.toLowerCase()) {
@@ -500,7 +498,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
             setIsManagingAdmin(false);
         }
     }
-    
+   
     const handleRetrieveSecretCode = async (): Promise<void> => {
         if (faucetType !== 'dropcode' || !faucetAddress) return;
         try {
@@ -517,7 +515,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
             setIsRetrievingSecret(false);
         }
     }
-    
+   
     const handleGenerateNewDropCode = async (): Promise<void> => {
         if (faucetType !== 'dropcode' || !faucetAddress || !address || !chainId) return;
         if (!isOwnerOrAdmin) { toast({ title: "Unauthorized", description: "Only owner/admin can generate new codes", variant: "destructive" }); return }
@@ -540,7 +538,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
             setIsGeneratingNewCode(false)
         }
     }
-    
+   
     const handleCopySecretCode = async (code: string): Promise<void> => {
         try {
             await navigator.clipboard.writeText(code)
@@ -650,7 +648,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
             {/* --- ADMIN DATA AT A GLANCE --- */}
             <CardContent className="px-4 sm:px-6 pb-2">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 border p-4 rounded-lg bg-muted/20">
-                    
+                   
                     {/* Faucet Balance */}
                     <div className="flex flex-col">
                         <span className="text-xs font-medium text-muted-foreground flex items-center">
@@ -670,7 +668,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
                             {faucetType === 'custom' ? 'Custom' : faucetDetails.claimAmount ? formatUnits(faucetDetails.claimAmount, tokenDecimals) : "0"} {faucetType !== 'custom' ? tokenSymbol : ''}
                         </span>
                     </div>
-                    
+                   
                     {/* Live Status */}
                     <div className="flex flex-col">
                         <span className="text-xs font-medium text-muted-foreground flex items-center">
@@ -702,7 +700,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
 
             <CardContent className="px-4 sm:px-6">
                 <Tabs defaultValue="fund" value={activeTab} onValueChange={setActiveTab}>
-                    
+                   
                     {/* --- Mobile Tabs Dropdown (Fix) --- */}
                     <div className="sm:hidden mb-4">
                         <DropdownMenu>
@@ -806,7 +804,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
                                 </div>
                             </div>
                         </Card>
-                        
+                       
                         {/* Social Media Tasks Section */}
                         <Card className="p-4 border shadow-sm space-y-4">
                             <CardTitle className="text-base font-semibold border-b pb-2 flex items-center">
@@ -906,14 +904,14 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
     </div>
   )}
                         </Card>
-                        
+                       
                         {/* Custom X Post Template Section */}
                         <Card className="p-4 border shadow-sm space-y-4">
                             <CardTitle className="text-base font-semibold border-b pb-2 flex items-center">
                                 <Share2 className="h-4 w-4 mr-2" /> Custom Share Post
                             </CardTitle>
                             <div>
-                                <p className="text-xs text-muted-foreground">Customize the message users share after a successful drop.</p>
+                                <p className="text-xs text-muted-foreground">Customize the message users share after a successful drip.</p>
                                 <p className="text-xs font-mono text-blue-500 mt-1">Placeholders: {"{amount}"}, {"{token}"}, {"{network}"}, {"{explorer}"}</p>
                             </div>
                             <Textarea placeholder="..." value={customXPostTemplate} onChange={(e) => setCustomXPostTemplate(e.target.value)} rows={4} className="text-xs font-mono" />
@@ -1020,7 +1018,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
                                 </div>
                             )}
                         </Card>
-                        
+                       
                         <Card className="p-4 border shadow-sm space-y-4">
                             <CardTitle className="text-base font-semibold border-b pb-2 flex items-center">
                                 <RotateCcw className="h-4 w-4 mr-2" /> Reset Claims
@@ -1056,7 +1054,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
                     </TabsContent>
                 </Tabs>
             </CardContent>
-            
+           
             {/* --- Dialogs --- */}
 
             {/* PREVIEW DIALOG: Shows a simulated FaucetUserView (Smart Preview) */}
@@ -1067,9 +1065,9 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
                             <Eye className="h-5 w-5 mr-2" /> User View Preview
                         </DialogTitle>
                         <DialogDescription className="text-sm">
-                            This preview uses the latest saved and unsaved parameter values (Name, Drop Amount, Tasks) to show the user interface.
+                            This preview uses the latest saved and unsaved parameter values (Name, Drip Amount, Tasks) to show the user interface.
                         </DialogDescription>
-                        
+                       
                         {combinedPreviewTasks.length > 0 && (
                             <div className="mt-3 p-3 bg-muted rounded-lg space-y-1">
                                 <p className="text-xs font-semibold flex items-center">
@@ -1216,7 +1214,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
                 <DialogContent className="w-11/12 max-w-md">
                     <DialogHeader><DialogTitle className="text-lg sm:text-xl">Current Drop Code</DialogTitle><DialogDescription className="text-xs sm:text-sm">This is the current drop code for your faucet.</DialogDescription></DialogHeader>
                     <div className="space-y-4 py-4"><div className="text-center">
-                        <div className="text-xl sm:text-2xl font-mono font-bold bg-gray-100 dark:bg-gray-800 p-4 rounded-lg">{currentSecretCode}</div>
+                        <div className="text-xl sm:text-2xl font-mono font-bold bg-gray-100 dark:bg-gray-800 p-4 rounded">{currentSecretCode}</div>
                     </div></div>
                     <DialogFooter>
                         <Button onClick={() => handleCopySecretCode(currentSecretCode)} className="text-xs sm:text-sm w-full"><Copy className="h-4 w-4 mr-1" /> Copy Code</Button>
@@ -1229,7 +1227,7 @@ const FaucetAdminView: React.FC<FaucetAdminViewProps> = ({
                 <DialogContent className="w-11/12 max-w-md">
                     <DialogHeader><DialogTitle className="text-lg sm:text-xl">New Drop Code Generated</DialogTitle><DialogDescription className="text-xs sm:text-sm">Your new drop code has been generated and stored. The previous code is no longer valid.</DialogDescription></DialogHeader>
                     <div className="space-y-4 py-4"><div className="text-center">
-                        <div className="text-xl sm:text-2xl font-mono font-bold bg-gray-100 dark:bg-gray-800 p-4 rounded-lg">{newlyGeneratedCode}</div>
+                        <div className="text-xl sm:text-2xl font-mono font-bold bg-gray-100 dark:bg-gray-800 p-4 rounded">{newlyGeneratedCode}</div>
                     </div></div>
                     <DialogFooter>
                         <Button onClick={() => handleCopySecretCode(newlyGeneratedCode)} className="text-xs sm:text-sm w-full"><Copy className="h-4 w-4 mr-1" /> Copy New Code</Button>

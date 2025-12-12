@@ -173,6 +173,27 @@ const loadSocialMediaLinks = async (faucetAddress: string): Promise<SocialMediaL
         return [];
     }
 }
+
+const loadFaucetMetadata = async (faucetAddress: string): Promise<{description: string, imageUrl: string}> => {
+  try {
+    const response = await fetch(`https://fauctdrop-backend.onrender.com/faucet-metadata/${faucetAddress}`);
+    if (!response.ok) {
+      if (response.status === 404) {
+        return {description: '', imageUrl: DEFAULT_FAUCET_IMAGE};
+      }
+      throw new Error(`Failed to fetch metadata: ${response.statusText}`);
+    }
+    const result = await response.json();
+    return {
+      description: result.description || '',
+      imageUrl: result.imageUrl || DEFAULT_FAUCET_IMAGE
+    };
+  } catch (error) {
+    console.error('Error fetching metadata:', error);
+    return {description: '', imageUrl: DEFAULT_FAUCET_IMAGE};
+  }
+};
+
 // Add this near your other constants
 const FIXED_TWEET_PREFIX = "I just dripped {amount} {token} from @FaucetDrops on {network}.";
 const loadCustomXPostTemplate = async (faucetAddress: string): Promise<string> => {
@@ -341,9 +362,10 @@ export default function FaucetDetails() {
         setCustomXPostTemplate(await loadCustomXPostTemplate(faucetAddress))
         
         // Load Metadata
+        const metadata = await loadFaucetMetadata(faucetAddress);
         setFaucetMetadata({ 
-            description: getDefaultFaucetDescription(targetNetwork.name, details.owner),
-            imageUrl: DEFAULT_FAUCET_IMAGE
+            description: metadata.description || getDefaultFaucetDescription(targetNetwork.name, details.owner),
+            imageUrl: metadata.imageUrl
         })
 
         if (address) {
